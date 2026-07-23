@@ -358,8 +358,12 @@ class Paths:
         return "instances.json"
 
     @property
-    def strategy_path(self) -> str:
-        return "strategy.json"
+    def decision_rule_path(self) -> str:
+        return "decision_rules.json"
+
+    @property
+    def decision_path(self) -> str:
+        return "decision.json"
 
     @property
     def macro_finder(self) -> str:

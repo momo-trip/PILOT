@@ -5,8 +5,10 @@ import time
 from collections import defaultdict, deque
 from typing import Dict, List, NamedTuple, Set, Tuple
 
-import networkx as nx
 import numpy as np
+import networkx as nx
+import pandas as pd
+from scipy.stats import skew
 
 import clang.cindex
 from clang.cindex import (
@@ -1407,5 +1409,215 @@ def write_metrics(target_cmd, graph_metrics):
         write_json(meta_path, meta_data)
 
 
-def get_estimated_cent(strategy_path):
+def calculate_gini(values):
+    """Compute the Gini coefficient"""
+    if len(values) == 0:
+        return np.nan
+    
+    sorted_values = np.sort(values)
+    n = len(values)
+    index = np.arange(1, n + 1)
+    gini = (2 * np.sum(index * sorted_values)) / (n * np.sum(sorted_values)) - (n + 1) / n
+    return gini
+
+
+def analyze_graph_structures(graph_data_dict):
+    
+    results = []
+    
+    for target_cmd, (graph_metrics, G) in graph_data_dict.items():
+        print(f"Analyzing {target_cmd}...")
+        
+        stats = {"target_cmd": target_cmd}
+        
+        # === 1. Basic graph statistics ===
+        stats["num_nodes"] = G.number_of_nodes()
+        stats["num_edges"] = G.number_of_edges()
+        
+        if stats["num_nodes"] > 0:
+            stats["avg_in_degree"] = np.mean([d for n, d in G.in_degree()])
+            stats["avg_out_degree"] = np.mean([d for n, d in G.out_degree()])
+            stats["density"] = nx.density(G)
+        else:
+            stats["avg_in_degree"] = 0
+            stats["avg_out_degree"] = 0
+            stats["density"] = 0
+        
+        # === 2. Structural features of the graph ===
+        # Strongly connected component analysis
+        sccs = list(nx.strongly_connected_components(G))
+        stats["num_strongly_connected"] = len(sccs)
+        stats["largest_scc_size"] = len(max(sccs, key=len)) if sccs else 0
+        stats["largest_scc_ratio"] = stats["largest_scc_size"] / stats["num_nodes"] if stats["num_nodes"] > 0 else 0
+        
+        # Weakly connected component analysis
+        wccs = list(nx.weakly_connected_components(G))
+        stats["num_weakly_connected"] = len(wccs)
+        stats["largest_wcc_size"] = len(max(wccs, key=len)) if wccs else 0
+        
+        # Diameter and average shortest path length (computed on the largest WCC)
+        if stats["largest_wcc_size"] > 1:
+            largest_wcc = max(wccs, key=len)
+            subgraph = G.subgraph(largest_wcc)
+            
+            try:
+                # Treat as an undirected graph for the computation
+                undirected = subgraph.to_undirected()
+                stats["diameter"] = nx.diameter(undirected)
+                stats["avg_shortest_path"] = nx.average_shortest_path_length(undirected)
+            except:
+                stats["diameter"] = np.nan
+                stats["avg_shortest_path"] = np.nan
+            
+            try:
+                stats["clustering_coefficient"] = nx.average_clustering(undirected)
+            except:
+                stats["clustering_coefficient"] = np.nan
+        else:
+            stats["diameter"] = np.nan
+            stats["avg_shortest_path"] = np.nan
+            stats["clustering_coefficient"] = np.nan
+        
+        # === 3. Distribution characteristics of centrality metrics ===
+        centrality_metrics = [
+            "in_degree_centrality",
+            "out_degree_centrality", 
+            "betweenness_centrality",
+            "pagerank",
+            "closeness_centrality"
+        ]
+        
+        for metric in centrality_metrics:
+            if metric in graph_metrics and graph_metrics[metric]:
+                values = np.array(list(graph_metrics[metric].values()))
+                
+                # Skewness
+                stats[f"{metric}_skew"] = skew(values) if len(values) > 0 else np.nan
+                
+                # Gini coefficient
+                stats[f"{metric}_gini"] = calculate_gini(values)
+                
+                # Top 10% concentration
+                if len(values) > 0:
+                    top_10_percent = int(np.ceil(len(values) * 0.1))
+                    sorted_values = np.sort(values)[::-1]
+                    top_sum = np.sum(sorted_values[:top_10_percent])
+                    total_sum = np.sum(values)
+                    stats[f"{metric}_top10_concentration"] = top_sum / total_sum if total_sum > 0 else 0
+                else:
+                    stats[f"{metric}_top10_concentration"] = np.nan
+        
+        results.append(stats)
+    
+    # Convert to a DataFrame
+    df = pd.DataFrame(results)
+    
+    # Organize the column order
+    basic_cols = ["target_cmd", "num_nodes", "num_edges", "avg_in_degree", 
+                  "avg_out_degree", "density"]
+    structure_cols = ["num_strongly_connected", "largest_scc_size", "largest_scc_ratio",
+                     "num_weakly_connected", "largest_wcc_size", 
+                     "diameter", "avg_shortest_path", "clustering_coefficient"]
+    
+    # Collect centrality-related columns
+    centrality_cols = [col for col in df.columns if col not in basic_cols + structure_cols]
+    
+    # Reorder the columns
+    ordered_cols = basic_cols + structure_cols + sorted(centrality_cols)
+    df = df[ordered_cols]
+    
+    return df
+
+
+def estimate_cent_from_graph(structure_dict, rules, default_method="random_t"):
+    """
+    Estimate the optimal centrality strategy from graph structural features.
+
+    Uses the thresholds and weights stored in rules["feature_thresholds"]
+    (loaded from hr_decision_rules.json). The scoring logic is identical to
+    the one used inside recommend_methods_for_programs.
+    """
+    scores = {}
+    matched_conditions = {}
+
+    for method, thresholds in rules.get("feature_thresholds", {}).items():
+        if not thresholds:
+            scores[method] = 0.0
+            matched_conditions[method] = []
+            continue
+
+        matched_weight = 0.0
+        total_weight = 0.0
+        conditions = []
+
+        for feature, info in thresholds.items():
+            if feature not in structure_dict:
+                continue
+
+            value = structure_dict[feature]
+            operator = info["operator"]
+            threshold = info["value"]
+            weight = abs(info["correlation"])  # correlation strength as weight
+
+            total_weight += weight
+
+            is_matched = (
+                (operator == ">=" and value >= threshold) or
+                (operator == "<=" and value <= threshold)
+            )
+            if is_matched:
+                matched_weight += weight
+                conditions.append(info["interpretation"])
+
+        # weighted match ratio
+        scores[method] = matched_weight / total_weight if total_weight > 0 else 0.0
+        matched_conditions[method] = conditions
+
+    # no method matched any condition -> fall back to baseline
+    if not scores or all(s == 0 for s in scores.values()):
+        return default_method, 0.0, scores, matched_conditions
+
+    recommended_method, confidence = max(scores.items(), key=lambda x: x[1])
+    return recommended_method, confidence, scores, matched_conditions
+
+
+def get_estimated_cent(
+    target_cmd, paths, default_method="random_t"
+):
+    """
+    Estimate the optimal centrality strategy directly from build_graph output.
+
+    Converts (graph_metrics, G) into structural features via
+    analyze_graph_structures, then delegates to estimate_cent_from_graph.
+    """
+    # Load decisions
+    decision = {}
+    if os.path.exists(paths.decision_path):
+        decision = read_json(paths.decision_path)
+        if decision is not None:
+            if target_cmd in decision:
+                print(f"Method: {decision[target_cmd]}")
+                return decision[target_cmd]
+        else:
+            decision = {}
+
+    # Load decision rules and build the call graph
+    rules = read_json(paths.decision_rule_path)
+
+    graph_metrics, G = build_graph(paths.callee_path, paths.callee_main_path)
+
+    # analyze_graph_structures expects {target_cmd: (graph_metrics, G)}
+    df = analyze_graph_structures({target_cmd: (graph_metrics, G)})
+    structure_dict = df.iloc[0].drop("target_cmd").to_dict()
+
+    recommended_method, confidence, scores, matched_conditions = estimate_cent_from_graph(
+        structure_dict, rules, default_method
+    )
+
+    decision[target_cmd] = recommended_method
+    write_json(paths.decision_path, decision)
+
+    print(f"Recommended method: {recommended_method}")
+    return recommended_method
+
 

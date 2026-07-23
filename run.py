@@ -523,9 +523,11 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
         home_dir=home_dir,
         macro_parser_dir=config.macro_parser_dir,
     )
-
+    
     if config.cent is None:
-        config.cent = get_estimated_cent(paths.strategy_path)
+        config.cent = get_estimated_cent(
+            target_cmd, paths
+        )
 
     fixed_metric, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(
         config.strategy, config.cent

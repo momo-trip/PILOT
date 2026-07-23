@@ -5,11 +5,13 @@ reformat_original.py
 hd_strategy.json 
 instances.json 
 benchmark.json
+decision_rules.json
 
 #
 __pycache__/
 *.py[cod]
 
+decision.json
 config.json 
 configs.py
 trash.py
