@@ -837,7 +837,7 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
                 queue.append((callee_id, new_path, new_directions, new_call_files, new_call_lines))
     
     elapsed = time.time() - start_time
-    print(f"BFS completed: {iterations} iterations, {elapsed:.2f}s, {len(all_paths)} paths found")
+    # print(f"BFS completed: {iterations} iterations, {elapsed:.2f}s, {len(all_paths)} paths found")
     
     # Sort paths by length
     all_paths.sort(key=lambda x: len(x["path"]))

@@ -6,6 +6,8 @@ import shutil
 import sys
 import time
 import traceback
+import signal
+import threading
 
 from functools import partial
 
@@ -71,8 +73,6 @@ from pilot_lib.reformat import (
 
 
 FEEDBACK = True 
-SURROUND = True  #False #True imposes more constraints
-
 
 periodic_running = True
 periodic_start_time = None  # Variable to record the start time
@@ -117,7 +117,7 @@ def get_basic_report(
     paths, target, original_target_dir, exec_time, target_cmd,
     process_type, llm_model, strategy, llm_choice,
     fixed_explore_time, temperature, total_time, interval,
-    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
+    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
 ):
     print("\n====== Getting output report =======")
     log_json = read_json(paths.logging_path)
@@ -149,11 +149,6 @@ def get_basic_report(
     if process_type == "gen" and strategy != "":
         strategy_str = f"_{strategy}" 
         
-    if SURROUND:
-        sur = "T"
-    else:
-        sur = "F"
-    
     fixed_str = ""
     if fixed_metric is not None:
         fixed_str = f"_{fixed_metric}"
@@ -167,7 +162,7 @@ def get_basic_report(
         feedback = 'no_feed'
 
     formatted_id = str(trial_id).zfill(3)
-    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"_{sur}" + f"_{MIN_LENGTH}" + f"_{fixed_explore_time}" + f"_{feedback}" + f"{fixed_str}"
+    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"_{MIN_LENGTH}" + f"_{fixed_explore_time}" + f"_{feedback}" + f"{fixed_str}"
 
     # print(paths.chat_dir)
     # print(paths.snap_dir)
@@ -210,7 +205,6 @@ def get_basic_report(
         "WO_READ" : WO_READ,
         "WO_PATH" : WO_PATH,
         "WO_VALIDATION" : WO_VALIDATION,
-        "SURROUND" : SURROUND,
     }
     write_json(setting_path, setting)
 
@@ -260,7 +254,7 @@ def get_final_report(
     paths, process_type, start_time, target_cmd, target, original_target_dir,
     fixed_explore_time, temperature, total_time, interval, 
     fixed_metric, llm_choice, llm_model, strategy,
-    MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
+    MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
 ):
     global will_show
     if will_show:
@@ -273,7 +267,7 @@ def get_final_report(
         paths, target, original_target_dir, exec_time, target_cmd,
         process_type, llm_model, strategy, llm_choice,
         fixed_explore_time, temperature, total_time, interval,
-        fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
+        fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
     )
 
 
@@ -289,7 +283,7 @@ def set_timeout(
     result_path, dep_json_path, logging_path,
     fixed_explore_time, temperature, total_time, interval, 
     fixed_metric, llm_choice, llm_model, strategy,
-    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
     cov_report_path, select_path, database_dir, token_path
 ):
     def timeout_handler(signum, frame):
@@ -302,7 +296,7 @@ def set_timeout(
             result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
             fixed_explore_time, temperature, total_time, interval, 
             fixed_metric, llm_choice, llm_model, strategy,
-            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
             cov_report_path, select_path, database_dir, token_path,
             config_data
         )
@@ -551,15 +545,13 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     ###### Main pipeline
     #######################################################
 
-    AGENT = False
-
     if config.llm_model is None:
         if "claude" in config.llm_choice:
             config.llm_model = get_claude_model(config.llm_choice)
 
-    if AGENT is False:
+    if config.AGENT is False:
         llm_interface = LLMInterface(
-            AGENT=AGENT,
+            AGENT=config.AGENT,
             project_id=target,
             occupy_path=paths.occupy_path,
             llm_choice=config.llm_choice,
@@ -568,7 +560,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             azure_endpoint=config.azure_endpoint,
             temperature=config.temperature,
             timeout=config.timeout, 
-            output_max=config.output_max, #128000, # 4000,
+            output_max=config.output_max, #128000, #4000,
             context_window=config.context_window, #1000000,
             history_path=paths.history_path,
             token_path=paths.token_path,
@@ -587,7 +579,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             delete_file(paths.cost_path)
 
         llm_interface = AgentInterface(
-            AGENT=AGENT,
+            AGENT=config.AGENT,
             project_id=target,
             occupy_path=paths.occupy_path,
             llm_choice=config.llm_choice,
@@ -633,14 +625,14 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 process_type, start_time, target_cmd, target, original_target_dir,
                 config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
                 fixed_metric, config.llm_choice, config.llm_model, config.strategy,
-                config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND        
+                config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION        
             )) 
 
         if process_type == "tool":
             if not os.path.exists(paths.tool_dir):
                 create_directory(paths.tool_dir)
 
-            find_tool(target, target_cmd, paths.target_dir, llm_interface, os_version)
+            find_tool(target, target_cmd, paths.target_dir, llm_interface, config.os_version)
 
         elif process_type == "prepare":
             print("Preparing ...")
@@ -711,7 +703,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             # get main-function surrounded 
             get_related_main(
-                program_dir, database_json, target_cmd, home_dir, config.WEIGHT, 
+                paths.program_dir, database_json, target_cmd, home_dir, config.WEIGHT, 
                 paths.work_dir, paths.callee_main_path, paths.callee_path, paths.distance_path, 
                 paths.meta_dir, paths.database_dir
             )
@@ -748,7 +740,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 paths.result_path, paths.dep_json_path, paths.logging_path,
                 config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
                 fixed_metric, config.llm_choice, config.llm_model, config.strategy,
-                paths.chat_dir, paths.snap_dir, config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+                paths.chat_dir, paths.snap_dir, config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
                 paths.cov_report_path, paths.select_path, paths.database_dir, paths.token_path
             ) 
             print(f"Target_dir: {paths.target_dir}")
@@ -765,8 +757,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             # Write the first testcase
             ask_basic_command(
-                paths, llm_interface, target_cmd, 
-                database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
+                paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, fixed_metric, config.fixed_version_count,
+                original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, config.testfile_counter, WO_VALIDATION
             )
 
             target_function_count = 0
@@ -794,15 +786,14 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 # Explore pathes
                 try:
                     current_coverage, target_entry = explore_path(
-                        paths, llm_interface, config.strategy, tool_string, config.max_num_test, config.cov_target, current_coverage, targeted_set, target_cmd, 
+                        paths, llm_interface, config.strategy, config.cent, tool_string, config.max_num_test, config.cov_target, current_coverage, targeted_set, target_cmd, 
                         original_target_dir, fixed_metric, config.fixed_version_count, config.fixed_explore_time, config.explore_fix,
                         database_json, error, std_out, graph_metrics, G,
                         WO_READ, WO_PATH, WO_VALIDATION, config.MIN_LENGTH, config.GDB_OPTION, config.testfile_counter
                     ) 
                     print(f"Target_dir: {paths.target_dir}")
 
-                    # repair branches
-                    if target_entry['is_covered'] is True and target_entry['is_full_branch_covered'] is False:
+                    # # repair branches
                     # target_entry = {
                     #     "target_path": f"{home_dir}/workspace_tiffcp_old/libtiff-git-b51bb/libtiff/tiffiop.h",
                     #     "target_line": 114,
@@ -815,10 +806,13 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                     # }
                     # TEST = True
                     # if TEST is True:
+                    if target_entry['is_covered'] is True and target_entry['is_full_branch_covered'] is False:
                         try:
                             explore_branch(
-                                paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry,
-                                original_target_dir, config.max_num_test, config.fixed_explore_time, explore_fix,
+                                paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry, tool_string, fixed_metric,
+                                original_target_dir, config.max_num_test, 
+                                config.fixed_explore_time, config.explore_fix, config.max_iterations, config.fixed_version_count, config.testfile_counter,
+                                WO_READ, WO_PATH, WO_VALIDATION, config.MIN_LENGTH, config.GDB_OPTION,
                                 database_json, error, std_out, graph_metrics, G
                             )
                             # current_coverage = explore_branch(
@@ -843,7 +837,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 )
                 save_coverage_report(config.cov_target, paths.cov_report_path, paths.token_path, branch_coverage, line_coverage, func_coverage, None)
 
-                if strategy == "wo_t":
+                if config.strategy == "wo_t":
                     print("Finished: WO_TARGET senario done!")
                     sys.exit(0)
 

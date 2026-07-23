@@ -3,10 +3,8 @@ import random
 import shlex
 import subprocess
 import sys
-import threading
 import time
 import glob
-import signal
 
 from datetime import datetime
 from pathlib import Path
@@ -244,7 +242,6 @@ def ask_basic_command_llm(ctx):
 
     initial_std_out = None
 
-    cmd_exe = database_json[ctx.target_cmd]["cmd_exe"]
     pure_cmd = get_pure_cmd(ctx.target_cmd)
     
     prompt.extend([f"Please write a shell script that demonstrates the most basic usage of {pure_cmd} command to process an input file.",
@@ -292,7 +289,7 @@ def ask_basic_command_llm(ctx):
     file_string = get_lined_code(ctx.paths.run_test_path, ctx.paths.work_dir)
     prompt.extend([f'{file_string}\n'])
 
-    prompt.extend(["", "## Directory Structure of the Target Program:"]) 
+    prompt.extend(["", "## Directory structure of the target program:"]) 
     directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
     write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
     directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
@@ -463,7 +460,7 @@ def ask_basic_command_llm(ctx):
             std_out = None 
         
         if count > 1:
-            prompt.extend(["", "## Directory Structure of the Target Program:"]) 
+            prompt.extend(["", "## Directory structure of the target program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
             write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
             directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 10000)
@@ -516,13 +513,10 @@ def ask_basic_command_agent(ctx):
     ongoing / output_max lines are dropped.
     """
 
-    print("Asking basic commands...")
-
-    cmd_exe = database_json[ctx.target_cmd]["cmd_exe"]
-    pure_cmd = get_pure_cmd(ctx.target_cmd)
-
     # --- Agent execution environment: inspect source + author the shell script.
     #     No build / recompile; the script is run externally by run_script. ---
+    
+    print("Asking basic commands...")
     agent = ctx.llm_interface
     agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
@@ -532,6 +526,7 @@ def ask_basic_command_agent(ctx):
     if agent.session_path:
         delete_file(agent.session_path)
 
+    pure_cmd = get_pure_cmd(ctx.target_cmd)
     delete_file(ctx.paths.run_test_path)
 
     error = None
@@ -600,7 +595,7 @@ def ask_basic_command_agent(ctx):
             std_out = None
 
         # --- directory structure ---
-        prompt.extend(["", "## Directory Structure of the Target Program:"])
+        prompt.extend(["", "## Directory structure of the target program:"])
         directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
         write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
         directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000)
@@ -640,31 +635,39 @@ def ask_basic_command_agent(ctx):
 
 
 def ask_basic_command(
-    paths, llm_interface, target_cmd, 
-    database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
+    paths, llm_interface, target_cmd, cov_target, max_num_test, fixed_metric, fixed_version_count,
+    original_target_dir, database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
 ):
+
+    execute_path = f"{paths.work_dir}/execute.sh"
+    cmd_exe = database_json[target_cmd]["cmd_exe"]
+
     ctx = RepairContext(
         paths=paths,
         llm_interface=llm_interface,
-        select=False,
+        entry=None,
         cov_target=cov_target,
         strategy=strategy,
-        max_num_test=max_num_test,
-        entry=None,
-        original_run_test_path=target_entry['original_run_test_path'],
-        repair_count=repair_count,
-        # target_path=target_path,
-        # target_function=target_function,
-        # target_uncovered_ratio=target_uncovered_ratio,
-        # target_branch=target_branch,
-        # target_line=target_line,
-        # target_end_line=target_end_line,
+        tool_string=tool_string,
         target_cmd=target_cmd,
-        execute_path=execute_path,
-        cmd_list=cmd_list,
-        explore_time=explore_time,
         cmd_exe=cmd_exe,
-        notes=notes,
+        notes=None,
+        cmd_list=None,
+        original_target_dir=original_target_dir,
+        original_run_test_path=None,
+        execute_path=execute_path,
+        max_num_test=max_num_test,
+        max_iterations=max_iterations,
+        fixed_version_count=fixed_version_count,
+        fixed_metric=fixed_metric,
+        explore_time=None,
+        repair_count=1,
+        testfile_counter=testfile_counter,
+        WO_READ=None,
+        WO_PATH=None,
+        WO_VALIDATION=WO_VALIDATION,
+        MIN_LENGTH=None,
+        GDB_OPTION=None,
     )
 
     if llm_interface.AGENT is False:
@@ -694,7 +697,7 @@ def write_time(time_path, activity, action, strategy, timestamp=None):
 
 
 
-def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
+def get_path_info_wide(run_test_path, callee_main_path, target_entry, function_branch_path):
     
     prompt = []
     candidates = []
@@ -761,7 +764,7 @@ def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
                         break
         
     covered_prompt = []
-    covered_prompt.append(f"## Alreadly covered functions when the previously generated testcase ({ctx.paths.run_test_path}) was executed")
+    covered_prompt.append(f"## Alreadly covered functions when the previously generated testcase ({run_test_path}) was executed")
     covered_prompt.append("### Covered functions")
     count = 0
     for key, value in result.items():
@@ -981,11 +984,11 @@ def repair_test_llm(ctx):
             if ctx.repair_count == 1:
                 prompt = []
                 if ctx.cov_target == "branch":
-                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file.",
+                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry["target_branch"]}' on line {ctx.entry["target_line"]} in the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file.",
                                 f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                                 ])
                 elif ctx.cov_target == "function":
-                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will reach the {ctx.entry.target_function} function of the {ctx.entry.target_path} file (Line {ctx.entry.target_line}).",
+                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will reach the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                                 ])
@@ -1057,7 +1060,7 @@ def repair_test_llm(ctx):
                 if not (ctx.GDB_OPTION and explore_count > 3):
                     if ctx.cov_target == "branch":
                         prompt = [f"With the current code, we have not yet been able to pass through the specified branch. ",
-                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry.target_path} file's {ctx.entry.target_function} function's line {ctx.entry.target_line} branch {ctx.entry.target_branch}",
+                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry["target_path"]} file's {ctx.entry["target_function"]} function's line {ctx.entry["target_line"]} branch {ctx.entry["target_branch"]}",
                                 f"Please follow the instructions below and select {mode_statement} to generate your response."
                                 ]
                         prompt.extend(["", "## Response rules:", #"- Test cases refer to the inputs of the entry point function.",
@@ -1073,9 +1076,9 @@ def repair_test_llm(ctx):
                                     ])
                         prompt.extend(ctx.notes)
 
-                    elif cov.cov_target == "function":
+                    elif ctx.cov_target == "function":
                         prompt = [f"With the current code, we have not yet been able to reach the target function. ",
-                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {ctx.entry.target_line}).",
+                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry["target_path"]} file's {ctx.entry["target_function"]} function (Line {ctx.entry["target_line"]}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 f"Please follow the instructions below and select {mode_statement} to generate your response."
                                 ]
@@ -1095,13 +1098,13 @@ def repair_test_llm(ctx):
                     
                 else:
                     if ctx.cov_target == "branch":
-                        prompt = [f"With the current code, we still haven't been able to pass through the specified branch.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file).",
-                                f"To generate code that passes through the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
+                        prompt = [f"With the current code, we still haven't been able to pass through the specified branch.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file).",
+                                f"To generate code that passes through the specified branch '{ctx.entry["target_branch"]}' on line {ctx.entry["target_line"]} in the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
                                 #"Please follow the response rules below and answer."
                                 ]
                     elif ctx.cov_target == "function":
-                        prompt = [f"With the current code, we still haven't been able to reach the target function.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file).",
-                                f"To generate code that reaches the {ctx.entry.target_function} function of the {ctx.entry.target_path} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
+                        prompt = [f"With the current code, we still haven't been able to reach the target function.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file).",
+                                f"To generate code that reaches the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
                                 #"Please follow the response rules below and answer."
                                 ]
 
@@ -1113,10 +1116,10 @@ def repair_test_llm(ctx):
 
             if execute_out is not None:
                 execute_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/execute_out.txt", execute_out, 10000)
-                prompt.extend(["## Execution Result:", f"{execute_out}"]) 
+                prompt.extend(["## Execution result:", f"{execute_out}"]) 
 
             if execute_error is not None:
-                prompt.extend(["", "## Execution Result Error: ", f"{execute_error}"])
+                prompt.extend(["", "## Execution result error: ", f"{execute_error}"])
 
             execute_error = None 
             execute_out = None
@@ -1302,7 +1305,7 @@ def repair_test_llm(ctx):
                 
                 if not ctx.WO_PATH and ctx.strategy != "wo_t":
                     path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                        ctx.paths.callee_main_path, entry, ctx.paths.function_branch_path
+                        ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, function_branch_path
                     )
 
                     path_info = "\n".join(path_info)
@@ -1339,10 +1342,10 @@ def repair_test_llm(ctx):
 
             if std_out is not None and std_out is not True:
                 std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
-                prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"]) #, std_out]) #, std_out]) # std_out])
+                prompt.extend(["", f"## Execution result of {ctx.paths.run_test_path}:", f"{std_out}"]) #, std_out]) #, std_out]) # std_out])
                 std_out = None #std_out = ""
 
-            prompt.extend(["", "## Directory Structure of the Target Program:"]) 
+            prompt.extend(["", "## Directory structure of the target program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
             write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
             directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #10000)
@@ -1352,7 +1355,7 @@ def repair_test_llm(ctx):
             prompt.extend(["- In summary, please respond in the following JSON format:"]) 
             prompt.extend([autonomous_template])
 
-            prompt.extend(["", "## Directory Structure of the Target Program:"]) 
+            prompt.extend(["", "## Directory structure of the target program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
             write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
             directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
@@ -1361,13 +1364,13 @@ def repair_test_llm(ctx):
         
 
         if ctx.strategy == "base":
-            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
-            target_code = trim_code(ctx.entry.target_path, target_code, 8000) #10000)
+            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"])
+            target_code = trim_code(ctx.entry["target_path"], target_code, 8000) #10000)
     
             if ctx.cov_target == "branch":
-                prompt.extend(["", f"## Branch to be covered (branch {ctx.entry.target_branch} on line {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file):"])
+                prompt.extend(["", f"## Branch to be covered (branch {ctx.entry["target_branch"]} on line {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file):"])
             elif ctx.cov_target == "function":
-                prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
+                prompt.extend(["", f"## Target function ({ctx.entry["target_function"]} of {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]})):"])
 
             prompt.extend([target_code])
 
@@ -1529,7 +1532,7 @@ def repair_test_llm(ctx):
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                     ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    initial_coverage, ctx.paths.function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                    initial_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 )
             
             else:
@@ -1565,7 +1568,7 @@ def repair_test_llm(ctx):
             
         if is_covered is True:
             is_full_branch_covered = get_branch_covered(
-                ctx.entry.target_path, ctx.entry.target_function, ctx.entry.target_line, ctx.entry.target_end_line
+                ctx.entry["target_path"], ctx.entry["target_function"], ctx.entry["target_line"], ctx.entry["target_end_line"]
             )
             ans_entry['is_full_branch_covered'] = is_full_branch_covered
 
@@ -1622,6 +1625,7 @@ def repair_test_agent(ctx):
     if agent.session_path:
         delete_file(agent.session_path)
 
+    pure_cmd = get_pure_cmd(ctx.target_cmd)
     llm_start_time = time.time()
     write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
 
@@ -1676,10 +1680,10 @@ def repair_test_agent(ctx):
             if ctx.repair_count == 1:
                 prompt = []
                 if ctx.cov_target == "branch":
-                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file.",
+                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry["target_branch"]}' on line {ctx.entry["target_line"]} in the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file.",
                                 ])
                 elif ctx.cov_target == "function":
-                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will reach the {ctx.entry.target_function} function of the {ctx.entry.target_path} file (Line {ctx.entry.target_line}).",
+                    prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will reach the {ctx.entry["target_function"]} function of the {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 ])
 
@@ -1731,7 +1735,7 @@ def repair_test_agent(ctx):
             else:
                 if ctx.cov_target == "branch":
                     prompt = [f"With the current code, we have not yet been able to pass through the specified branch. ",
-                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry.target_path} file's {ctx.entry.target_function} function's line {ctx.entry.target_line} branch {ctx.entry.target_branch}",
+                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry["target_path"]} file's {ctx.entry["target_function"]} function's line {ctx.entry["target_line"]} branch {ctx.entry["target_branch"]}",
                             ]
                     prompt.extend(["", "## Response rules:",
                                 f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
@@ -1747,7 +1751,7 @@ def repair_test_agent(ctx):
 
                 elif ctx.cov_target == "function":
                     prompt = [f"With the current code, we have not yet been able to reach the target function. ",
-                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {ctx.entry.target_line}).",
+                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry["target_path"]} file's {ctx.entry["target_function"]} function (Line {ctx.entry["target_line"]}).",
                             f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                             ]
                     prompt.extend(["", "## Response rules:",
@@ -1770,14 +1774,14 @@ def repair_test_agent(ctx):
 
         if std_out is not None and std_out is not True:
             std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
-            prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"])
+            prompt.extend(["", f"## Execution result of {ctx.paths.run_test_path}:", f"{std_out}"])
             std_out = None
 
         # path_info / covered_info (from the original)
         if ctx.strategy == "base":
             if not ctx.WO_PATH and ctx.strategy != "wo_tool":
                 path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                    ctx.paths.callee_main_path, ctx.entry, function_branch_path
+                    ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, function_branch_path
                 )
 
                 path_info = "\n".join(path_info)
@@ -1790,20 +1794,20 @@ def repair_test_agent(ctx):
                 prompt.extend([""])
                 prompt.extend([covered_info])
 
-        prompt.extend(["", "## Directory Structure of the Target Program:"])
+        prompt.extend(["", "## Directory structure of the target program:"])
         directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
         write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
         directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000)
         prompt.extend([directory_structure, ""])
 
         if ctx.strategy == "base":
-            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
-            target_code = trim_code(ctx.entry.target_path, target_code, 8000)
+            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"])
+            target_code = trim_code(ctx.entry["target_path"], target_code, 8000)
 
             if ctx.cov_target == "branch":
-                prompt.extend(["", f"## Branch to be covered (branch {ctx.entry.target_branch} on line {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file):"])
+                prompt.extend(["", f"## Branch to be covered (branch {ctx.entry["target_branch"]} on line {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file):"])
             elif ctx.cov_target == "function":
-                prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
+                prompt.extend(["", f"## Target function ({ctx.entry["target_function"]} of {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]})):"])
 
             prompt.extend([target_code])
 
@@ -1842,7 +1846,7 @@ def repair_test_agent(ctx):
 
         if is_covered is True:
             is_full_branch_covered = get_branch_covered(
-                ctx.entry.target_path, ctx.entry.target_function, ctx.entry.target_line, ctx.entry.target_end_line
+                ctx.entry["target_path"], ctx.entry["target_function"], ctx.entry["target_line"], ctx.entry["target_end_line"]
             )
             ans_entry['is_full_branch_covered'] = is_full_branch_covered
 
@@ -2208,7 +2212,7 @@ def use_random_target(targeted_set, summary_data, target_dir, branch_path, calle
             func_key = f"{func_name}@{selected_branch['file_path']}:{selected_branch['func_start_line']}"
 
         function_id = f"{func_name}@{selected_branch['file_path']}:{selected_branch['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
-        if SURROUND and function_id not in related_list:
+        if function_id not in related_list:
             continue
 
         # If it is not the main function, select this branch
@@ -2297,7 +2301,7 @@ def get_target_entry(
 
 
 def explore_path(
-    paths, llm_interface, strategy, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, 
+    paths, llm_interface, strategy, cent, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, 
     original_target_dir, fixed_metric, fixed_version_count, fixed_explore_time, explore_fix,
     database_json, error, std_out, graph_metrics, G,
     WO_READ, WO_PATH, WO_VALIDATION, MIN_LENGTH, GDB_OPTION, testfile_counter
@@ -2310,6 +2314,7 @@ def explore_path(
                 strategy, target_cmd, paths.target_dir, paths.meta_dir, paths.database_dir, paths.work_dir, targeted_set, 
                 paths.is_program_path, paths.callee_path, paths.callee_main_path, graph_metrics, fixed_metric, WO_PATH
             ) 
+            print("Pure")
         else:
             target_entry = get_target_entry(
                 cent, targeted_set, paths.target_dir, 
@@ -2336,6 +2341,8 @@ def explore_path(
     cmd_exe = database_json[target_cmd]["cmd_exe"]
     notes = database_json[target_cmd]["notes"]
 
+    execute_path = f"{paths.work_dir}/execute.sh"
+
     if explore_fix == "t":
         explore_time = fixed_explore_time
     else:
@@ -2346,26 +2353,23 @@ def explore_path(
     ctx = RepairContext(
         paths=paths,
         llm_interface=llm_interface,
-        select=False,
+        entry=target_entry,
         cov_target=cov_target,
         strategy=strategy,
         tool_string=tool_string,
-        fixed_version_count=fixed_version_count,
-        entry=target_entry,
-        max_num_test=max_num_test,
-        fixed_metric=fixed_metric,
-        repair_count=repair_count,
-        # target_path=target_path,
-        # target_function=target_function,
-        # target_uncovered_ratio=target_uncovered_ratio,
-        # target_branch=target_branch,
-        # target_line=target_line,
-        # target_end_line=target_end_line,
         target_cmd=target_cmd,
-        cmd_list=cmd_list,
-        explore_time=explore_time,
         cmd_exe=cmd_exe,
         notes=notes,
+        cmd_list=cmd_list,
+        original_target_dir=original_target_dir,
+        original_run_test_path=None,
+        execute_path=execute_path,
+        max_num_test=max_num_test,
+        max_iterations=None,
+        fixed_version_count=fixed_version_count,
+        fixed_metric=fixed_metric,
+        explore_time=explore_time,
+        repair_count=repair_count,
         testfile_counter=testfile_counter,
         WO_READ=WO_READ,
         WO_PATH=WO_PATH,
@@ -2618,7 +2622,7 @@ def repair_branch_llm(ctx):
                 )
                 version_count += 1
 
-                print(f"\nJudge at {entry}: {is_increased}")
+                print(f"\nJudge at {ctx.entry}: {is_increased}")
                 save_coverage_report(
                     ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, 
                     current_branch_coverage, line_coverage, function_coverage, "llm"
@@ -2657,7 +2661,8 @@ def repair_branch_llm(ctx):
                 add_prompt = []
 
                 prompt.extend([
-                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
+                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry["target_function"]} function below.",
+                    f"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
                     f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                 ]) 
                                 
@@ -2696,7 +2701,7 @@ def repair_branch_llm(ctx):
                 #if explore_count > 3:
                 #if cov_target == "branch":
                 prompt = [f"With the current code, we have not yet been able to improve branch coverage of the target function.",
-                        f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will improve branch coverage of the target {ctx.entry.target_function} function.",
+                        f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will improve branch coverage of the target {ctx.entry["target_function"]} function.",
                         f"Please follow the instructions below and select {mode_statement} to generate your response."
                         ]
                 prompt.extend(["", "## Response rules:", #"- Test cases refer to the inputs of the entry point function.",
@@ -2764,7 +2769,7 @@ def repair_branch_llm(ctx):
                           f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                           f"- Please do not include commands that delete input files in the shell script.",
                           f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
-                          #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file).",
+                          #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file).",
                         ]
                 
         
@@ -2773,10 +2778,10 @@ def repair_branch_llm(ctx):
 
             if execute_out is not None: 
                 execute_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/execute_out.txt", execute_out, 10000)
-                prompt.extend(["## Execution Result:", f"{execute_out}"]) 
+                prompt.extend(["## Execution result:", f"{execute_out}"]) 
 
             if execute_error is not None:
-                prompt.extend(["", "## Execution Result Error: ", f"{execute_error}"])
+                prompt.extend(["", "## Execution result error: ", f"{execute_error}"])
 
             execute_error = None 
             execute_out = None
@@ -2956,10 +2961,10 @@ def repair_branch_llm(ctx):
 
             if std_out is not None and std_out is not True:
                 std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
-                prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"])
+                prompt.extend(["", f"## Execution result of {ctx.paths.run_test_path}:", f"{std_out}"])
                 std_out = None 
 
-            prompt.extend(["", "## Directory Structure of the Target Program:"])
+            prompt.extend(["", "## Directory structure of the target program:"])
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) 
             write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
             directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
@@ -2969,7 +2974,7 @@ def repair_branch_llm(ctx):
             prompt.extend(["- In summary, please respond in the following JSON format:"]) 
             prompt.extend([autonomous_template])
 
-            prompt.extend(["", "## Directory Structure of the Target Program:"])
+            prompt.extend(["", "## Directory structure of the target program:"])
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
             write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
             directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
@@ -2977,11 +2982,13 @@ def repair_branch_llm(ctx):
             prompt.extend([directory_structure, ""])
 
         if ctx.strategy == "base":
-            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
-            target_code = trim_code(ctx.entry.target_path, target_code, 8000) #10000)
+            target_code = get_lined_specific_code(
+                ctx.paths.database_dir, ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"]
+            )
+            target_code = trim_code(ctx.entry["target_path"], target_code, 8000) #10000)
 
             # covered_code = get_covered_code()
-            annotated_code = get_annotated_source_code_range(ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
+            annotated_code = get_annotated_source_code_range(ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"])
             print("=== Annotated source code ===")
             print(annotated_code)
 
@@ -2989,8 +2996,7 @@ def repair_branch_llm(ctx):
             prompt.extend(["", f"## Original test shell that reaches the target function (in {ctx.original_run_test_path}):"])
             prompt.extend([test_code])
 
-
-            prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
+            prompt.extend(["", f"## Target function ({ctx.entry["target_function"]} of {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]})):"])
             prompt.extend([target_code])
 
             prompt.extend(["", f"## Target function with coverage information:"])
@@ -3152,7 +3158,7 @@ def repair_branch_llm(ctx):
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                     ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    initial_coverage, ctx.paths.function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                    initial_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 ) 
             
             else:
@@ -3254,7 +3260,8 @@ def repair_branch_agent(ctx):
             if ctx.repair_count == 1:
                 prompt = []
                 prompt.extend([
-                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
+                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry["target_function"]} function below.",
+                    f"Please write shell script code in {ctx.paths.run_test_path} to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
                 ])
 
                 tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
@@ -3283,7 +3290,7 @@ def repair_branch_agent(ctx):
             else:
                 prompt = [
                     f"With the current code, we have not yet been able to improve branch coverage of the target function.",
-                    f"Please write a shell script code to {ctx.paths.run_test_path} that will improve branch coverage of the target {ctx.entry.target_function} function.",
+                    f"Please write a shell script code to {ctx.paths.run_test_path} that will improve branch coverage of the target {ctx.entry["target_function"]} function.",
                 ]
                 prompt.extend(["", "## Response rules:",
                     f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
@@ -3345,11 +3352,11 @@ def repair_branch_agent(ctx):
 
         if std_out is not None and std_out is not True:
             std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
-            prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"])
+            prompt.extend(["", f"## Execution result of {ctx.paths.run_test_path}:", f"{std_out}"])
             std_out = None
 
         # --- directory structure ---
-        prompt.extend(["", "## Directory Structure of the Target Program:"])
+        prompt.extend(["", "## Directory structure of the target program:"])
         directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
         write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
         directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000)
@@ -3357,17 +3364,17 @@ def repair_branch_agent(ctx):
 
         # --- target function + coverage annotation + original reaching test (from the original) ---
         if ctx.strategy == "base":
-            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
-            target_code = trim_code(ctx.entry.target_path, target_code, 8000)
+            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"])
+            target_code = trim_code(ctx.entry["target_path"], target_code, 8000)
 
             # covered_code = get_covered_code()
-            annotated_code = get_annotated_source_code_range(ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
+            annotated_code = get_annotated_source_code_range(ctx.entry["target_path"], ctx.entry["target_line"], ctx.entry["target_end_line"])
 
             test_code = read_file(ctx.original_run_test_path)
             prompt.extend(["", f"## Original test shell that reaches the target function (in {ctx.original_run_test_path}):"])
             prompt.extend([test_code])
 
-            prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
+            prompt.extend(["", f"## Target function ({ctx.entry["target_function"]} of {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]})):"])
             prompt.extend([target_code])
 
             prompt.extend(["", f"## Target function with coverage information:"])
@@ -3426,8 +3433,10 @@ def repair_branch_agent(ctx):
 
 
 def explore_branch(
-    paths, llm_interface, strategy, cov_target, target_cmd, target_entry,
-    original_target_dir, max_num_test, fixed_explore_time, explore_fix,
+    paths, llm_interface, strategy, cov_target, target_cmd, target_entry, tool_string, fixed_metric,
+    original_target_dir, max_num_test, 
+    fixed_explore_time, explore_fix, max_iterations, fixed_version_count, testfile_counter,
+    WO_READ, WO_PATH, WO_VALIDATION, MIN_LENGTH, GDB_OPTION,
     database_json, error, std_out, graph_metrics, G
 ):
     entry = {}
@@ -3450,19 +3459,29 @@ def explore_branch(
     ctx = RepairContext(
         paths=paths,
         llm_interface=llm_interface,
-        select=False,
+        entry=target_entry,
         cov_target=cov_target,
         strategy=strategy,
-        max_num_test=max_num_test,
-        entry=target_entry,
-        original_run_test_path=target_entry['original_run_test_path'],
-        repair_count=repair_count,
+        tool_string=tool_string,
         target_cmd=target_cmd,
-        execute_path=execute_path,
-        cmd_list=cmd_list,
-        explore_time=explore_time,
         cmd_exe=cmd_exe,
         notes=notes,
+        cmd_list=cmd_list,
+        original_target_dir=original_target_dir,
+        original_run_test_path=target_entry['original_run_test_path'],
+        execute_path=execute_path,
+        max_num_test=max_num_test,
+        max_iterations=max_iterations,
+        fixed_version_count=fixed_version_count,
+        fixed_metric=fixed_metric,
+        explore_time=explore_time,
+        repair_count=repair_count,
+        testfile_counter=testfile_counter,
+        WO_READ=WO_READ,
+        WO_PATH=WO_PATH,
+        WO_VALIDATION=WO_VALIDATION,
+        MIN_LENGTH=MIN_LENGTH,
+        GDB_OPTION=GDB_OPTION,
     )
 
 
@@ -3490,9 +3509,9 @@ def explore_branch(
             diff = 0
 
         target_data = {
-            "file_path" : target_path,
-            "line_number" : target_line,
-            "name" : target_function,
+            "file_path" : target_entry["target_path"],
+            "line_number" :  target_entry["target_line"],
+            "name" :  target_entry["target_function"],
             "repair_count" : repair_count,
             "version_count" : version_count,
             "elapsed_time" : elapsed_time, 
@@ -3506,7 +3525,7 @@ def explore_branch(
             "diff" : diff,
         }
 
-        update_select(select_path, target_data)
+        update_select(paths.select_path, target_data)
     
     # print(f"Current coverage: {current_coverage}")
     # return current_coverage 

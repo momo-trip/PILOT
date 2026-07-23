@@ -153,7 +153,7 @@ class Paths:
     @property
     def program_dir(self) -> str:
         return f"{self.home_dir}/program"
-        
+
     @property
     def target_dir(self) -> str:
         return f"{self.work_dir}/{self.target}"
@@ -388,28 +388,17 @@ class RepairContext:
     cmd_exe: str
     notes: list
     cmd_list: list
+    original_target_dir: str
+    original_run_test_path: str
+    execute_path: str
     max_num_test: int
+    max_iterations: int
     fixed_version_count: int
     fixed_metric: Optional[str]
     explore_time: Optional[int]
     repair_count: int = 1
     testfile_counter: int = 0
-    select: bool = False
-
-    # --- target info ---
-    target_path: Optional[str] = None
-    target_function: Optional[str] = None
-    target_uncovered_ratio: Optional[float] = None
-    target_branch: Optional[int] = None
-    target_line: Optional[int] = None
-    target_end_line: Optional[int] = None
-
-    # --- testcase info (currently unused, default None) ---
-    test_path: Optional[str] = None
-    file_path: Optional[str] = None
-    test_id: Optional[str] = None
-    function_name: Optional[str] = None
-    main_flag: Optional[bool] = None
+    # select: bool = False
 
     # --- strategy flags ---
     WO_READ: bool = False
@@ -1666,3 +1655,31 @@ def get_branch_covered(target_file, target_function, start_line, end_line):
 
     except Exception as e:
         return False 
+
+
+def get_start_line(program, name, file_path, line_number, meta_dir):
+
+    start_line = None
+    end_line = None
+    meta_data, meta_path = get_metadata(file_path, meta_dir, None)
+    meta_path = f"preset/{program}/{meta_path}"
+    meta_data = read_json(meta_path)
+
+    if meta_data is None: # added
+        return None, None #, None
+
+    for key, item in meta_data.items():
+        if line_number is None:
+            if item['name'] == name and item['def_file_path'] == file_path:
+                start_line = item['def_start_line']
+                end_line = item['def_end_line']
+                line_number = item['def_start_line']
+                break
+        else:
+            if item['name'] == name and item['def_file_path'] == file_path and item['def_start_line'] <= line_number and line_number <= item['def_end_line']:
+                start_line = item['def_start_line']
+                end_line = item['def_end_line']
+                break
+
+    return start_line, end_line #, line_number 
+
