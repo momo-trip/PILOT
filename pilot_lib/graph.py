@@ -729,7 +729,7 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
     Ultra safe BFS version with strict limits to prevent memory issues
     """
     
-    print(f"\nStarting ultra-safe BFS: {start} -> {target}")
+    print(f"\nStarting BFS: {start} -> {target}")
     start_time = time.time()
     
     all_paths = []
@@ -944,110 +944,6 @@ def get_related_main(
     get_total_weight(callee_main_path, distance_path)
 
     write_weighted_centrality(callee_path, callee_main_path, distance_path)
-
-
-
-def build_relationship(function_metadata):
-    """
-    Build a call graph containing callers and callees information from function metadata
-    Uses function name, file path, and start line as a composite key to handle functions with the same name
-    
-    Args:
-        function_metadata: A list of JSON metadata
-    
-    Returns:
-        A dictionary keyed by the function's unique identifier, with the function information as the value
-    """
-    # Step 1: Collect the basic information of the functions
-    functions = {}
-    func_id_to_info = {}  # Mapping from function ID to function information
-    name_to_ids = {}      # Mapping from function name to a list of function IDs
-    
-    for item in function_metadata:
-        if item.get('category') == 'function':
-            # Create the function's unique identifier (combination of name, file, and line number)
-            func_name = item['name']
-            file_path = item.get('def_file_path', '')
-            start_line = item.get('def_start_line', 0)
-            
-            # Generate the unique identifier (including the file path and line number)
-            func_id = f"{func_name}@{file_path}:{start_line}"
-            
-            # Save the function information
-            func_info = {
-                'id': func_id,
-                'name': func_name,
-                'signature': item.get('signature', ''),
-                'file_path': file_path,
-                'is_static': item.get('is_static', False),
-                'def_start_line': start_line,
-                'def_end_line': item.get('def_end_line'),
-                'callers': [],  # List of functions that call this function (built later)
-                'callees': [],   # List of functions that this function calls (built later)
-                'call_sites': []   
-            }
-            
-            functions[func_id] = func_info
-            #func_id_to_info[func_id] = func_info
-    
-    # Step 2: Build the call relationships
-    for item in function_metadata:
-        if item.get('category') == 'function' and item.get('callees'):
-            # Get the identifier of the calling function
-            caller_name = item['name']
-            caller_file = item.get('def_file_path', '')
-            caller_line = item.get('def_start_line', 0)
-            caller_id = f"{caller_name}@{caller_file}:{caller_line}"
-            
-            # Skip if this function does not exist
-            if caller_id not in functions:
-                continue
-            
-            # Process the called functions
-            for call_site in item.get('callees', []):
-                callee_name = call_site['name']
-                callee_file = call_site.get('def_file_path', '')
-                callee_line = call_site.get('def_start_line', 0)
-                
-                callee_id = f"{callee_name}@{callee_file}:{callee_line}"
-
-
-                call_file = call_site.get('call_file_path', '')
-                call_line = call_site.get('call_start_line', 0)
-                callsite_id = f"{callee_name}@{call_file}:{call_line}"
-
-                # Create information for an unknown function
-                if callee_id not in functions:
-                    functions[callee_id] = {
-                        'id': callee_id,
-                        'name': callee_name,
-                        'signature': '',
-                        'file_path': callee_file,
-                        'is_static': False,
-                        'def_start_line': callee_line,
-                        'def_end_line': None,
-                        'callers': [],
-                        'callees': [],
-                        'call_sites': [],
-                        'is_external': True  # External function flag
-                    }
-                
-                # Update the mapping
-                if caller_id not in functions:
-                    functions[caller_id] = {}
-            
-                # Add the call relationship (bidirectional)
-                if callee_id not in functions[caller_id]['callees']:
-                    functions[caller_id]['callees'].append(callee_id)
-                
-                if callee_id not in functions[caller_id]['call_sites']:
-                    functions[caller_id]['call_sites'].append(callsite_id)
-
-                if caller_id not in functions[callee_id]['callers']:
-                    functions[callee_id]['callers'].append(caller_id)
-
-    return functions
-
 
 
 def get_main_info(program_dir, database_json, target_cmd, current_path, work_dir, meta_dir, flag=None):

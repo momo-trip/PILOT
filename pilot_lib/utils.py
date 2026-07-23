@@ -178,6 +178,10 @@ class Paths:
     @property
     def callee_main_path(self) -> str:
         return f"{self.database_dir}/callee_main.json"
+    
+    @property
+    def candidate_path(self) -> str:
+        return f"{self.database_dir}/cov_candidate.json"  
 
     @property
     def isolated_path(self) -> str:
@@ -190,6 +194,11 @@ class Paths:
     @property
     def result_path(self) -> str:
         return f"{self.database_dir}/result.json"
+
+    @property
+    def log_path(self) -> str:
+        return f"{self.database_dir}/log.txt"
+
 
     @property
     def branch_path(self) -> str:
@@ -610,7 +619,7 @@ def save_function_coverage_data(function_data, function_path):
     covered_functions = function_data["covered_functions"]
     coverage_percent = function_data["coverage_percent"]
     
-    print(f"Function Coverage Summary:")
+    print(f"\nFunction Coverage Summary:")
     print(f"  Total Functions: {total_functions}")
     print(f"  Covered Functions: {covered_functions}")
     print(f"  Coverage: {coverage_percent}%")
@@ -912,8 +921,11 @@ def get_metadata(c_path, meta_dir, path_flag): # , signal
         suffix = ""
     
     meta_path = meta_dir + "/" + c_path[:-2] + suffix + ".json"
+    # print(f"Getting metadata from {meta_path}")
 
-    print(f"Getting metadata from {meta_path}")
+    if not os.path.exists(meta_path):
+        print(f"Not exist: {meta_path}")
+
     if path_flag is False:
         meta_data = read_json(meta_path)
         return meta_data
@@ -999,14 +1011,12 @@ def get_line_coverage(coverage_info_path, directory, line_path, is_program_path)
 
 def save_line_coverage_data(coverage_data, output_file, is_program_path): #coverage_data: Dict[str, CoverageData], output_file: str):
     
-    print("Save coverage data to JSON file")
-
+    #print("Save coverage data to JSON file")
     existing_data = {
         "total_lines" : None,
         "covered_lines" : None,
         "files" : {}
     }
-
     for file_path, coverage in coverage_data.items():
         if file_path not in existing_data:
             existing_data["files"][file_path] = {
@@ -1050,7 +1060,7 @@ def save_line_coverage_data(coverage_data, output_file, is_program_path): #cover
         # Calculate the coverage percentage for each file
         if file_total_lines > 0:
             file_coverage_percent = (file_covered_lines / file_total_lines) * 100
-            print(f"Coverage of {file_path}: {file_coverage_percent:.2f}%")
+            # print(f"Coverage of {file_path}: {file_coverage_percent:.2f}%")
         
         existing_data["files"][file_path]["total_lines"] = file_total_lines
         existing_data["files"][file_path]["covered_lines"] = file_covered_lines
@@ -1307,7 +1317,7 @@ def get_is_increased(database_dir, target_entry, previous_coverage, current_cove
 def run_cov_script(
     process_type, cov_target, run_test_path, entry, branch_path, line_path, function_path, 
     target_dir, database_dir, snap_dir, tmp_dir, 
-    initial_coverage, function_branch_path, is_program_path, current_cov_path): # option # timeout, dir_move_flag, option, 
+    initial_coverage, candidate_path, is_program_path, current_cov_path): # option # timeout, dir_move_flag, option, 
     print("Executing run_cov_script...")
 
     # setup cov file
@@ -1344,8 +1354,8 @@ def run_cov_script(
     timestamp = get_timestamp()
     original_run_test_path = write_testcase(run_test_path, snap_dir, timestamp)
 
-    delete_file(function_branch_path)
-    copy_file(function_path, function_branch_path)
+    delete_file(candidate_path)
+    copy_file(function_path, candidate_path)
 
 
     write_json(f"{tmp_dir}/target_{timestamp}.json", entry)
@@ -1372,7 +1382,7 @@ def run_cov_script(
 def run_branch_cov_script(
     process_type, run_test_path, entry, branch_path, line_path, function_path, is_program_path,
     target_dir, database_dir, snap_dir, tmp_dir, 
-    initial_coverage, function_branch_path
+    initial_coverage, candidate_path
 ):
     print("run_branch_cov_script...")
 
@@ -1436,8 +1446,8 @@ def run_branch_cov_script(
     timestamp = get_timestamp()
     original_run_test_path = write_testcase(run_test_path, snap_dir, timestamp)
 
-    delete_file(function_branch_path)
-    copy_file(function_path, function_branch_path)
+    delete_file(candidate_path)
+    copy_file(function_path, candidate_path)
 
     write_json(f"{tmp_dir}/target_{timestamp}.json", entry)
     copy_file(f"{tmp_dir}/target_{timestamp}.json", snap_dir)
@@ -1667,20 +1677,22 @@ def get_start_line(program, name, file_path, line_number, meta_dir):
     meta_path = f"preset/{program}/{meta_path}"
     meta_data = read_json(meta_path)
 
-    if meta_data is None: # added
+    if meta_data is None: 
         return None, None #, None
 
     for key, item in meta_data.items():
+        def_file_path, def_start_line, _ = parse_def_loc(item['definition'])
+        def_end_line = item['end_line'] #item['def_end_line']
         if line_number is None:
-            if item['name'] == name and item['def_file_path'] == file_path:
-                start_line = item['def_start_line']
-                end_line = item['def_end_line']
-                line_number = item['def_start_line']
+            if item['name'] == name and def_file_path == file_path:
+                start_line = def_start_line
+                end_line = def_end_line
+                line_number = def_start_line
                 break
         else:
-            if item['name'] == name and item['def_file_path'] == file_path and item['def_start_line'] <= line_number and line_number <= item['def_end_line']:
-                start_line = item['def_start_line']
-                end_line = item['def_end_line']
+            if item['name'] == name and def_file_path == file_path and def_file_path <= line_number and line_number <= def_end_line:
+                start_line = def_start_line
+                end_line = def_end_line
                 break
 
     return start_line, end_line #, line_number 

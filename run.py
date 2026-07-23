@@ -22,9 +22,12 @@ from utils_api import (
     rename_directory,
     create_directory,
     delete_directory,
+    reset_directory,
     get_last_directory,
     parse_def_loc,
     remove_base_path,
+    set_log,
+    record_log,
 )
 
 from llm_api import (
@@ -77,7 +80,7 @@ periodic_running = True
 periodic_start_time = None  # Variable to record the start time
 
 def run_periodic(
-    interval, target_dir, azure_endpoint, target_function_count, 
+    interval, target_dir, azure_endpoint, counter, 
     tmp_branch_path, tmp_line_path, tmp_function_path
 ):
     """Keep running the function against the directory at the specified interval"""
@@ -93,7 +96,7 @@ def run_periodic(
         else:
             print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min), region: {azure_endpoint}")
 
-        print(f"Target function count: {target_function_count}")
+        print(f"Target function count: {counter['value']}")
 
         branch_path = tmp_branch_path
         line_path = tmp_line_path
@@ -103,11 +106,11 @@ def run_periodic(
         
 
 def start_periodic_server(
-    process_type, strategy, interval, target_dir, azure_endpoint, target_function_count, 
+    process_type, strategy, interval, target_dir, azure_endpoint, counter, 
     tmp_branch_path, tmp_line_path, tmp_function_path
 ):
     if process_type != "prepare" and process_type != "preset" and process_type != "gcno":
-        periodic_thread = threading.Thread(target=run_periodic, args=(interval, target_dir, azure_endpoint, target_function_count, tmp_branch_path, tmp_line_path, tmp_function_path))
+        periodic_thread = threading.Thread(target=run_periodic, args=(interval, target_dir, azure_endpoint, counter, tmp_branch_path, tmp_line_path, tmp_function_path))
         periodic_thread.daemon = True  # Terminate together when the main thread ends
         periodic_thread.start()
 
@@ -155,7 +158,7 @@ def get_basic_report(
         fixed_str = ""
 
     formatted_id = str(trial_id).zfill(3)
-    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"{fixed_str}" # + f"_{fixed_explore_time}"
+    destination = paths.archive_dir + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"{fixed_str}" # + f"_{fixed_explore_time}"
 
     # print(paths.chat_dir)
     # print(paths.snap_dir)
@@ -184,6 +187,9 @@ def get_basic_report(
 
     if os.path.exists(paths.token_path):
         copy_file(paths.token_path, destination)
+
+    if os.path.exists(paths.log_path):
+        copy_file(paths.log_path, destination)
 
     setting_path = f"{destination}/setting.json"
     
@@ -446,23 +452,11 @@ def get_strategies(strategy, cent):
 
 def initialize(paths, original_target_dir):
 
-    delete_directory(paths.meta_dir)
-    create_directory(paths.meta_dir)
-
-    delete_directory(paths.target_dir)
-    delete_directory(paths.work_dir)
-
-    delete_directory(paths.snap_dir)
-    create_directory(paths.snap_dir)
-
-    # delete_directory(paths.database_dir)
-    # create_directory(paths.database_dir)
-
-    delete_directory(paths.chat_dir)
-    create_directory(paths.chat_dir)
-
-    delete_directory(paths.tmp_dir)
-    create_directory(paths.tmp_dir)
+    reset_directory(paths.meta_dir)
+    reset_directory(paths.work_dir)
+    reset_directory(paths.snap_dir)
+    reset_directory(paths.chat_dir)
+    reset_directory(paths.tmp_dir)
     
     delete_file(paths.reformed_path)
     delete_file(paths.isolated_path)
@@ -480,8 +474,12 @@ def initialize(paths, original_target_dir):
 
     delete_file(paths.token_path)
     delete_file(f"{paths.cov_report_path}")
-
     delete_file(paths.time_path)
+    
+    delete_file(paths.function_path)
+    delete_file(paths.branch_path)
+    delete_file(paths.line_path)
+    delete_file(paths.candidate_path)
 
     write_file(paths.current_cov_path, "")
 
@@ -570,6 +568,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
         if os.path.exists(paths.cost_path):
             delete_file(paths.cost_path)
 
+        os.environ["IS_SANDBOX"] = "1"
         llm_interface = AgentInterface(
             AGENT=config.AGENT,
             project_id=target,
@@ -580,13 +579,13 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             azure_endpoint=config.azure_endpoint,
             work_dir=work_dir_abs,
             allowed_tools=[
-                "Read", "Grep", "Glob", "Bash",
-                f"Edit({work_dir_abs}/**)",
-                f"Write({work_dir_abs}/**)",
+                "Read", "Grep", "Glob", "Bash", "Write", "Edit"
+                # f"Edit({work_dir_abs}/**)",
+                # f"Write({work_dir_abs}/**)",
             ],
             add_dirs=[database_dir_abs], 
             max_turns=50,
-            permission_mode="acceptEdits",
+            permission_mode="bypassPermissions",
             session_path=paths.session_path,
             database_dir=paths.database_dir,
             chat_dir=paths.chat_dir,
@@ -717,6 +716,9 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
 
         elif process_type == "gen":
+
+            record_log(paths.log_path)
+
             # func_sum = get_func_sum(paths.callee_main_path)
             check_command_availability(paths.tool_json_path, target_cmd, target)
         
@@ -743,12 +745,12 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             tool_string, cmd_self = get_tool_string(paths.tool_json_path, target_cmd, target)
 
             # Write the first testcase
-            ask_basic_command(
-                paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, fixed_metric, config.fixed_version_count,
-                original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, config.testfile_counter, WO_VALIDATION
-            )
+            # ask_basic_command(
+            #     paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, fixed_metric, config.fixed_version_count,
+            #     original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, config.testfile_counter, WO_VALIDATION
+            # )
 
-            target_function_count = 0
+            counter = {"value": 0}
             current_coverage = None
 
             while(1):
@@ -757,8 +759,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                     break
 
                 elapsed_time = time.time() - total_start_time
-                if target_function_count >= config.max_target_func:
-                    print(f"Reached {target_function_count} functions, so stopping")
+                if counter["value"] >= config.max_target_func:
+                    print(f"Reached {counter["value"]} functions, so stopping")
                     minutes = int(elapsed_time // 60)
                     print(f"{elapsed_time:.2f} seconds ({minutes} min) elapsed")
                     break
@@ -766,7 +768,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 if cycle == 1:
                     if config.COUNT_PERIODIC is True:
                         start_periodic_server(
-                            process_type, config.strategy, config.interval, paths.target_dir, config.azure_endpoint, target_function_count, 
+                            process_type, config.strategy, config.interval, paths.target_dir, config.azure_endpoint, counter, 
                             paths.tmp_branch_path, paths.tmp_line_path, paths.tmp_function_path
                         )                
 
@@ -831,7 +833,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 error = None
                 std_out = None
                 cycle += 1
-                target_function_count += 1
+                counter["value"] += 1
 
         elif process_type == "exp":
 

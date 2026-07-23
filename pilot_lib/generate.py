@@ -38,6 +38,8 @@ from llm_api import (
     ask_agent,
 )
 
+from c_parser_api import is_system_file
+
 from pilot_lib.utils import (
     get_random_void,
     get_metadata,
@@ -518,7 +520,6 @@ def ask_basic_command_agent(ctx):
     
     print("Asking basic commands...")
     agent = ctx.llm_interface
-    agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
         ctx.paths.target_dir, ctx.original_target_dir, ctx.paths.database_dir, ctx.paths.work_dir,
@@ -695,7 +696,7 @@ def write_time(time_path, activity, action, strategy, timestamp=None):
 
 
 
-def get_path_info_wide(run_test_path, callee_main_path, target_entry, function_branch_path):
+def get_path_info_wide(run_test_path, callee_main_path, target_entry, candidate_path):
     
     prompt = []
     candidates = []
@@ -744,7 +745,7 @@ def get_path_info_wide(run_test_path, callee_main_path, target_entry, function_b
     for item in all_paths:
         result[item] = False
 
-    cov_data = read_json(function_branch_path)
+    cov_data = read_json(candidate_path)
     if cov_data is not None:
         for target_item in result:
             target_name, target_path, target_line = parse_function_id(target_item)
@@ -862,8 +863,7 @@ read_template = f"""
 
 def repair_test_llm(ctx): 
 
-    output_max = ctx.llm_interface.output_max
-    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"      
+    output_max = ctx.llm_interface.output_max    
     pure_cmd = get_pure_cmd(ctx.target_cmd)
 
     initial_error = None
@@ -946,7 +946,7 @@ def repair_test_llm(ctx):
                 error, std_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                     ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    current_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                    current_coverage, ctx.paths.candidate_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 )
                 
                 if ctx.WO_VALIDATION is True:
@@ -1303,7 +1303,7 @@ def repair_test_llm(ctx):
                 
                 if not ctx.WO_PATH and ctx.strategy != "wo_t":
                     path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                        ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, function_branch_path
+                        ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, ctx.paths.candidate_path
                     )
 
                     path_info = "\n".join(path_info)
@@ -1369,7 +1369,6 @@ def repair_test_llm(ctx):
                 prompt.extend(["", f"## Branch to be covered (branch {ctx.entry["target_branch"]} on line {ctx.entry["target_line"]} in {ctx.entry["target_function"]} of {ctx.entry["target_path"]} file):"])
             elif ctx.cov_target == "function":
                 prompt.extend(["", f"## Target function ({ctx.entry["target_function"]} of {ctx.entry["target_path"]} file (Line {ctx.entry["target_line"]})):"])
-
             prompt.extend([target_code])
 
 
@@ -1530,7 +1529,7 @@ def repair_test_llm(ctx):
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                     ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    initial_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                    initial_coverage, ctx.paths.candidate_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 )
             
             else:
@@ -1556,24 +1555,21 @@ def repair_test_llm(ctx):
         "path_count" : path_count,
         "min_length" : min_length,
         "max_length" : max_length,
-        "original_run_test_path" : original_run_test_path,
+        "original_run_test_path" : ctx.original_run_test_path,
     }
 
     if ctx.strategy == "base": # is True:  #if select_flag is True:
         if ctx.original_run_test_path is None:
             timestamp = get_timestamp()
-            original_run_test_path = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
-            
+            ans_entry['original_run_test_path'] = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
+
         if is_covered is True:
             is_full_branch_covered = get_branch_covered(
                 ctx.entry["target_path"], ctx.entry["target_function"], ctx.entry["target_line"], ctx.entry["target_end_line"]
             )
             ans_entry['is_full_branch_covered'] = is_full_branch_covered
 
-        return ans_entry 
-
-    elif ctx.strategy == "wo_t":
-        return ans_entry
+    return ans_entry
     
 
 def repair_test_agent(ctx):
@@ -1588,7 +1584,6 @@ def repair_test_agent(ctx):
     lines are dropped.
     """
 
-    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
     is_covered = None
     diff = None
     is_increased = None
@@ -1615,7 +1610,6 @@ def repair_test_agent(ctx):
     #     script only. Building / recompiling / coverage measurement are not done
     #     by the agent; measurement is done by the orchestrator. ---
     agent = ctx.llm_interface
-    agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
         ctx.paths.target_dir, ctx.original_target_dir, ctx.paths.database_dir, ctx.paths.work_dir,
@@ -1654,7 +1648,7 @@ def repair_test_agent(ctx):
             error, std_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                 ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path,
                 ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir,
-                current_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                current_coverage, ctx.paths.candidate_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
             )
 
             if ctx.WO_VALIDATION is True:
@@ -1779,7 +1773,7 @@ def repair_test_agent(ctx):
         if ctx.strategy == "base":
             if not ctx.WO_PATH and ctx.strategy != "wo_tool":
                 path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                    ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, function_branch_path
+                    ctx.paths.run_test_path, ctx.paths.callee_main_path, ctx.entry, ctx.paths.candidate_path
                 )
 
                 path_info = "\n".join(path_info)
@@ -1839,8 +1833,7 @@ def repair_test_agent(ctx):
     if ctx.strategy == "base":
         if ctx.original_run_test_path is None:
             timestamp = get_timestamp()
-            original_run_test_path = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
-            ans_entry['original_run_test_path'] = ctx.original_run_test_path
+            ans_entry['original_run_test_path'] = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
 
         if is_covered is True:
             is_full_branch_covered = get_branch_covered(
@@ -1848,10 +1841,7 @@ def repair_test_agent(ctx):
             )
             ans_entry['is_full_branch_covered'] = is_full_branch_covered
 
-        return ans_entry
-
-    elif ctx.strategy == "wo_t":
-        return ans_entry
+    return ans_entry
 
 
 def sort_by_centrality(data, graph_metrics, fixed_metric):
@@ -1897,13 +1887,11 @@ def get_pure_target(
     strategy, target_cmd, target_dir, meta_dir, database_dir, work_dir, targeted_set,
     is_program_path, callee_path, callee_main_path, graph_metrics, fixed_metric, WO_PATH
 ):
-
-    ####################################################
-    ### Prepare priority data
-    ####################################################
-    
+    # Prepare priority data
     data = read_json(callee_path)
     related_ids = get_related_data(callee_main_path)
+    program_files = set(read_json(is_program_path))
+
     # data is in dictionary form, so treat the key-value pairs as items
     # then filter out items whose key is not in targeted_set
     #available_items = [(key, value) for key, value in data.items() if key not in targeted_set]
@@ -1923,6 +1911,9 @@ def get_pure_target(
         if key not in related_ids:
             continue
         
+        if is_system_file(item['file_path'], program_files) is True:
+            continue
+
         if item['name'].startswith('__builtin_va'):
             continue
         item['def_file_path'] = item['file_path']
@@ -2380,7 +2371,7 @@ def explore_path(
         ans_entry = repair_test_llm(ctx)
     else:
         ans_entry = repair_test_agent(ctx)
-
+    
     if strategy != "wo_t":
         repair_count = ans_entry['repair_count']
         version_count = ans_entry['version_count']
@@ -2399,9 +2390,9 @@ def explore_path(
             diff = 0
 
         target_data = {
-            "file_path" : target_path,
-            "line_number" : target_line,
-            "name" : target_function,
+            "file_path" : target_entry['target_path'],
+            "line_number" : target_entry['target_line'],
+            "name" : target_entry['target_function'],
             "repair_count" : repair_count,
             "version_count" : version_count,
             "elapsed_time" : elapsed_time, 
@@ -2544,8 +2535,6 @@ def get_annotated_source_code_range(target_file_path, start_line=None, end_line=
 
 def repair_branch_llm(ctx):
 
-    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
-
     explore_time = None
     initial_error = None
     initial_std_out = None
@@ -2614,7 +2603,7 @@ def repair_branch_llm(ctx):
                 error, std_out, is_covered, is_increased, diff, current_branch_coverage, branch_coverage, line_coverage, function_coverage, timestamp = run_branch_cov_script(
                     ctx.strategy, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    current_branch_coverage, function_branch_path
+                    current_branch_coverage, ctx.paths.candidate_path
                 )
                 version_count += 1
 
@@ -3154,7 +3143,7 @@ def repair_branch_llm(ctx):
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
                     ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    initial_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
+                    initial_coverage, ctx.paths.candidate_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 ) 
             
             else:
@@ -3194,8 +3183,6 @@ def repair_branch_agent(ctx):
     only the mode descriptions, the JSON response template, and the
     ongoing / output_max / max_counter lines are dropped.
     """
-    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
-
     explore_time = None
     is_covered = None
     diff = None
@@ -3219,7 +3206,6 @@ def repair_branch_agent(ctx):
     #     Measurement (run_branch_cov_script) is done by the orchestrator, so the
     #     agent gets no Bash (avoids gcda contamination before measurement). ---
     agent = ctx.llm_interface
-    agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
         ctx.paths.target_dir, ctx.original_target_dir, ctx.paths.database_dir, ctx.paths.work_dir,
@@ -3388,7 +3374,7 @@ def repair_branch_agent(ctx):
             error, std_out, is_covered, is_increased, diff, current_branch_coverage, branch_coverage, line_coverage, function_coverage, timestamp = run_branch_cov_script(
                 ctx.strategy, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
                 ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                current_branch_coverage, function_branch_path
+                current_branch_coverage, ctx.paths.candidate_path
             )
 
             version_count += 1
