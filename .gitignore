@@ -1,15 +1,24 @@
-config.json 
-configs.py
 pilot_lib/h_export.py
 pilot_lib/h_cov.py
-# seeker.py
+pilot_lib/tool.py
+reformat_original.py 
+hd_strategy.json 
+instances.json 
+benchmark.json
 
+#
+__pycache__/
+*.py[cod]
+
+config.json 
+configs.py
 trash.py
 **/config.json
 **/instances.json
 
 database*/
 logs*/
+seed*/
 *workspace*/
 *metadata*/
 chats*/
@@ -20,6 +29,10 @@ preset/
 snapdata/
 tools/
 tmp/
+transit/
+exp/
+set/
+seed_tmp/
 
 program/*
 

@@ -37,8 +37,11 @@ from llm_api import (
 from c_parser_api import analyze_call_relationship
 
 from pilot_lib.utils import (
+    Paths,
+    ExplorerConfig,
     run_script,
     get_coverage,
+    merge_config,
 )
 
 from pilot_lib.tool import find_tool, get_tool_string
@@ -51,8 +54,6 @@ from pilot_lib.graph import (
 )
 from pilot_lib.generate import (
     check_command_availability,
-    set_timeout,
-    start_periodic_server,
     ask_basic_command,
     explore_path,
     explore_branch,
@@ -68,53 +69,84 @@ from pilot_lib.reformat import (
     generate_afl_argv,
 )
 
-############################################
-#### configurations
-############################################
 
 FEEDBACK = True 
 SURROUND = True  #False #True imposes more constraints
 
 
-def get_basic_report(target, target_dir, original_target_dir, archive_dir, result_path, dep_json_path,
-                    meta_dir, exec_time, logging_path, target_cmd,
-                    process_type, llm_model, strategy, llm_choice,
-                    fixed_explore_time, temperature, total_time, interval, 
-                    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-                    chat_dir, snap_dir,
-                    cov_report_path, select_path, database_dir, token_path,
-                    config_data
+periodic_running = True
+periodic_start_time = None  # Variable to record the start time
+
+def run_periodic(
+    interval, target_dir, azure_endpoint, target_function_count, 
+    tmp_branch_path, tmp_line_path, tmp_function_path
+):
+    """Keep running the function against the directory at the specified interval"""
+
+    global periodic_running, periodic_start_time
+    periodic_start_time = time.time()  # Record the start time
+
+    while periodic_running:
+        elapsed_time = time.time() - periodic_start_time
+        minutes = int(elapsed_time // 60)  # Compute the minutes
+        if azure_endpoint is None:
+            print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min)")
+        else:
+            print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min), region: {azure_endpoint}")
+
+        print(f"Target function count: {target_function_count}")
+
+        branch_path = tmp_branch_path
+        line_path = tmp_line_path
+        function_path = tmp_function_path
+
+        time.sleep(interval)  # Wait for the specified number of seconds
+        
+
+def start_periodic_server(
+    process_type, strategy, interval, target_dir, azure_endpoint, target_function_count, 
+    tmp_branch_path, tmp_line_path, tmp_function_path
+):
+    if process_type != "prepare" and process_type != "preset" and process_type != "gcno":
+        periodic_thread = threading.Thread(target=run_periodic, args=(interval, target_dir, azure_endpoint, target_function_count, tmp_branch_path, tmp_line_path, tmp_function_path))
+        periodic_thread.daemon = True  # Terminate together when the main thread ends
+        periodic_thread.start()
+
+
+def get_basic_report(
+    paths, target, original_target_dir, exec_time, target_cmd,
+    process_type, llm_model, strategy, llm_choice,
+    fixed_explore_time, temperature, total_time, interval,
+    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
 ):
     print("\n====== Getting output report =======")
-    last_dir = os.path.basename(target)
-    last_dir = target_cmd
-    log_json = read_json(logging_path)
-    if last_dir not in log_json:
-        log_json[last_dir] = {}
+    log_json = read_json(paths.logging_path)
+    if target_cmd not in log_json:
+        log_json[target_cmd] = {}
 
-    if 'current_count' not in log_json[last_dir]:
-        log_json[last_dir]['current_count'] = 1
+    if 'current_count' not in log_json[target_cmd]:
+        log_json[target_cmd]['current_count'] = 1
     
-    trial_id = str(log_json[last_dir]['current_count'])
-    log_json[last_dir]['current_count'] += 1
+    trial_id = str(log_json[target_cmd]['current_count'])
+    log_json[target_cmd]['current_count'] += 1
 
-    write_json(logging_path, log_json)
+    write_json(paths.logging_path, log_json)
 
-    result_json = read_json(result_path)
+    result_json = read_json(paths.result_path)
 
     if result_json is None:
         result_json = {}
-    if last_dir not in result_json:
-        result_json[last_dir] = {}
-    if trial_id not in result_json[last_dir]:
-        result_json[last_dir][trial_id] = {}
+    if target_cmd not in result_json:
+        result_json[target_cmd] = {}
+    if trial_id not in result_json[target_cmd]:
+        result_json[target_cmd][trial_id] = {}
 
     llm = ""
-    if process_type in ["core"]:
+    if process_type in ["gen"]:
         llm = f"_{llm_model}" 
     
     strategy_str = ""
-    if process_type == "core" and strategy != "":
+    if process_type == "gen" and strategy != "":
         strategy_str = f"_{strategy}" 
         
     if SURROUND:
@@ -135,35 +167,35 @@ def get_basic_report(target, target_dir, original_target_dir, archive_dir, resul
         feedback = 'no_feed'
 
     formatted_id = str(trial_id).zfill(3)
-    destination = archive_dir + "/" + last_dir + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"_{sur}" + f"_{MIN_LENGTH}" + f"_{fixed_explore_time}" + f"_{feedback}" + f"{fixed_str}" # + f"_{trial_id}" # + f"_{included}"
+    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"_{sur}" + f"_{MIN_LENGTH}" + f"_{fixed_explore_time}" + f"_{feedback}" + f"{fixed_str}"
 
-    # print(chat_dir)
-    # print(snap_dir)
+    # print(paths.chat_dir)
+    # print(paths.snap_dir)
     # print(cov_report_path)
-    # print(select_path)
+    # print(paths.select_path)
 
-    if os.path.exists(chat_dir):
-        copy_directory(f"{chat_dir}", destination)
+    if os.path.exists(paths.chat_dir):
+        copy_directory(f"{paths.chat_dir}", destination)
         rename_directory(f"{destination}/{target_cmd}", f"{destination}/chats")
 
-    if os.path.exists(snap_dir):
-        copy_directory(f"{snap_dir}", destination)
+    if os.path.exists(paths.snap_dir):
+        copy_directory(f"{paths.snap_dir}", destination)
         rename_directory(f"{destination}/{target_cmd}", f"{destination}/snapdata")
 
-    if os.path.exists(cov_report_path):
-        copy_file(cov_report_path, destination)
+    if os.path.exists(paths.cov_report_path):
+        copy_file(paths.cov_report_path, destination)
 
-    if os.path.exists(select_path):
-        copy_file(select_path, destination)
+    if os.path.exists(paths.select_path):
+        copy_file(paths.select_path, destination)
 
-    if os.path.exists(f"{database_dir}/cov_increased.json"):
-        copy_file(f"{database_dir}/cov_increased.json", destination)
+    if os.path.exists(f"{paths.database_dir}/cov_increased.json"):
+        copy_file(f"{paths.database_dir}/cov_increased.json", destination)
 
-    if os.path.exists(f"{database_dir}/cov_time.csv"):
-        copy_file(f"{database_dir}/cov_time.csv", destination)
+    if os.path.exists(f"{paths.database_dir}/cov_time.csv"):
+        copy_file(f"{paths.database_dir}/cov_time.csv", destination)
 
-    if os.path.exists(token_path):
-        copy_file(token_path, destination)
+    if os.path.exists(paths.token_path):
+        copy_file(paths.token_path, destination)
 
     setting_path = f"{destination}/setting.json"
     
@@ -184,8 +216,8 @@ def get_basic_report(target, target_dir, original_target_dir, archive_dir, resul
 
     total_in = 0
     total_out = 0
-    if os.path.exists(token_path):
-        token_data = read_json(token_path)
+    if os.path.exists(paths.token_path):
+        token_data = read_json(paths.token_path)
         for item in token_data:
             total_in += item['input_token']
             total_out += item['output_token']
@@ -201,35 +233,35 @@ def get_basic_report(target, target_dir, original_target_dir, archive_dir, resul
 
     current_directory = os.getcwd()
 
-    result_json[last_dir][trial_id]['cwd'] = current_directory
-    result_json[last_dir][trial_id]['exec_time'] = exec_time
-    result_json[last_dir][trial_id]['archive_dir'] = destination
-    result_json[last_dir][trial_id]["process_type"] = process_type
+    result_json[target_cmd][trial_id]['cwd'] = current_directory
+    result_json[target_cmd][trial_id]['exec_time'] = exec_time
+    result_json[target_cmd][trial_id]['archive_dir'] = destination
+    result_json[target_cmd][trial_id]["process_type"] = process_type
 
-    for key, value in config_data.items():
-        result_json[last_dir][trial_id][key] = value
+    """
+    for key, value in config.items():
+        result_json[target_cmd][trial_id][key] = value
 
-    if 'repair_details' not in result_json[last_dir]:
-        result_json[last_dir][trial_id]['repair_details'] = {}
+    if 'repair_details' not in result_json[target_cmd]:
+        result_json[target_cmd][trial_id]['repair_details'] = {}
 
-    if 'input_token' not in result_json[last_dir]:
-        result_json[last_dir][trial_id]['input_token'] = {}
+    if 'input_token' not in result_json[target_cmd]:
+        result_json[target_cmd][trial_id]['input_token'] = {}
     
-    if 'output_token' not in result_json[last_dir]:
-        result_json[last_dir][trial_id]['output_token'] = {}
-    
-    write_json(result_path, result_json)
+    if 'output_token' not in result_json[target_cmd]:
+        result_json[target_cmd][trial_id]['output_token'] = {}
+    """
+
+    write_json(paths.result_path, result_json)
 
 
 will_show = None
-def get_final_report(target_dir, process_type, start_time, original_target_dir, 
-                    archive_dir, result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
-                    fixed_explore_time, temperature, total_time, interval, 
-                    fixed_metric, llm_choice, llm_model, strategy,
-                    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-                    cov_report_path, select_path, database_dir, token_path,
-                    config_data):
-
+def get_final_report(
+    paths, process_type, start_time, target_cmd, target, original_target_dir,
+    fixed_explore_time, temperature, total_time, interval, 
+    fixed_metric, llm_choice, llm_model, strategy,
+    MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
+):
     global will_show
     if will_show:
         print("Program ended! Done.")
@@ -237,14 +269,47 @@ def get_final_report(target_dir, process_type, start_time, original_target_dir,
     end_time = time.time()
     exec_time = end_time - start_time
 
-    get_basic_report(target, target_dir, original_target_dir, archive_dir, result_path, dep_json_path,
-                    meta_dir, exec_time, logging_path, target_cmd,
-                    process_type, llm_model, strategy, llm_choice,
-                    fixed_explore_time, temperature, total_time, interval, 
-                    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-                    chat_dir, snap_dir,
-                    cov_report_path, select_path, database_dir, token_path,
-                    config_data)
+    get_basic_report(
+        paths, target, original_target_dir, exec_time, target_cmd,
+        process_type, llm_model, strategy, llm_choice,
+        fixed_explore_time, temperature, total_time, interval,
+        fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND
+    )
+
+
+def stop_periodic_server():
+    global periodic_running
+    periodic_running = False
+    time.sleep(1)
+
+
+def set_timeout(
+    seconds, start_time, process_type, target_cmd, target, 
+    target_dir, original_target_dir, archive_dir, meta_dir, 
+    result_path, dep_json_path, logging_path,
+    fixed_explore_time, temperature, total_time, interval, 
+    fixed_metric, llm_choice, llm_model, strategy,
+    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+    cov_report_path, select_path, database_dir, token_path
+):
+    def timeout_handler(signum, frame):
+        sys.stderr.write(f"Timeout ({seconds} seconds) occurred\n")
+        stop_periodic_server()  # Stop the periodic thread
+
+        get_final_report(
+            process_type, start_time, 
+            target_dir, original_target_dir, archive_dir, 
+            result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
+            fixed_explore_time, temperature, total_time, interval, 
+            fixed_metric, llm_choice, llm_model, strategy,
+            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+            cov_report_path, select_path, database_dir, token_path,
+            config_data
+        )
+        os._exit(1)  # Terminate the entire process
+
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
 
 
 def copy_directory(source_directory, destination_root, target=None):
@@ -312,23 +377,23 @@ def copy_directory(source_directory, destination_root, target=None):
             traceback.print_exc()
 
 
-def get_fixed_metric(strategy):
+def get_fixed_metric(cent):
     fixed_metric = None
-    # if strategy == "random_t":
+    # if cent == "random_t":
 
-    if strategy == "close":
+    if cent == "close":
         fixed_metric = "closeness_centrality"
         
-    elif strategy == "page":
+    elif cent == "page":
         fixed_metric = "pagerank"
         
-    elif strategy == "bet":
+    elif cent == "bet":
         fixed_metric = "betweenness_centrality"
         
-    elif strategy == "deg":
+    elif cent == "deg":
         fixed_metric = "degree_centrality"
     
-    elif strategy == "katz":
+    elif cent == "katz":
         fixed_metric = "katz_centrality"
         
     return fixed_metric
@@ -349,7 +414,7 @@ def get_random_id(process_type):
     return f"_{timestamp_part:03d}{random_part:03d}"  # 6 digits in total
 
 
-def get_strategies(strategy, optimal_centrality):
+def get_strategies(strategy, cent):
     
     fixed_metric = None
     WO_READ = False
@@ -358,319 +423,177 @@ def get_strategies(strategy, optimal_centrality):
     
     if strategy == "wo_read":
         WO_READ = True
-        fixed_metric = get_fixed_metric(optimal_centrality)  
+        fixed_metric = get_fixed_metric(cent)  
 
     elif strategy == "wo_t":
         max_target_func = None
 
     elif strategy == "wo_v": # without validation
         WO_VALIDATION = True
-        fixed_metric = get_fixed_metric(optimal_centrality)  
+        fixed_metric = get_fixed_metric(cent)  
 
     elif strategy == "wo_p": # without path guiding
         WO_READ = True   
         WO_PATH = True #True #False
-        fixed_metric = get_fixed_metric(optimal_centrality)  
+        fixed_metric = get_fixed_metric(cent)  
 
     elif strategy == "wo_pv": # without path guiding
         WO_VALIDATION = True 
         WO_READ = True   
         WO_PATH = True
-        fixed_metric = get_fixed_metric(optimal_centrality)  
+        fixed_metric = get_fixed_metric(cent)  
 
     elif strategy == "wo_tool": # without tool
-        fixed_metric = get_fixed_metric(optimal_centrality)
+        fixed_metric = get_fixed_metric(cent)
 
     # elif strategy == "random_t":
         
-    elif strategy in ["close", "page", "bet", "deg", "katz"]:
-        fixed_metric = get_fixed_metric(strategy)
+    elif strategy is None: #in ["close", "page", "bet", "deg", "katz"]:
+        fixed_metric = get_fixed_metric(cent)
         
-    if strategy not in ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]:
-        raise ValueError('Must within ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]')
+    # if strategy not in ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]:
+    #     raise ValueError('Must within ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]')
     
     return fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
 
 
 
-def initialize(original_target_dir, meta_dir, target_dir, work_dir, snap_dir, database_dir, 
-               chat_dir, tmp_dir, preset_dir, all_struct_path, all_typedef_path, 
-               type_json_path, func_json_path, prot_json_path, reformed_path, isolated_path, 
-               callee_path, callee_main_path, func_used_path, branch_path, line_path, periodic_path, logging_path, 
-               priority_path, select_path, is_program_path, token_path, cov_report_path, time_path, process_type, target_cmd):
 
-    delete_directory(meta_dir)
-    create_directory(meta_dir)
+def initialize(paths, original_target_dir):
 
-    delete_directory(target_dir)
-    delete_directory(work_dir)
-    delete_directory("coverage")
+    delete_directory(paths.meta_dir)
+    create_directory(paths.meta_dir)
 
-    delete_directory(snap_dir)
-    create_directory(snap_dir)
+    delete_directory(paths.target_dir)
+    delete_directory(paths.work_dir)
 
-    delete_file(f"{database_dir}/passed_tests.txt")
+    delete_directory(paths.snap_dir)
+    create_directory(paths.snap_dir)
 
-    # delete_directory(database_dir)
-    # create_directory(database_dir)
+    # delete_directory(paths.database_dir)
+    # create_directory(paths.database_dir)
 
-    delete_directory(chat_dir)
-    create_directory(chat_dir)
+    delete_directory(paths.chat_dir)
+    create_directory(paths.chat_dir)
 
-    delete_directory(tmp_dir)
-    create_directory(tmp_dir)
-
-    delete_file(all_struct_path)
-    delete_file(all_typedef_path)
-    delete_file(type_json_path)
-
-    write_json(all_struct_path, [])
-    write_json(all_typedef_path, [])
-    write_json(type_json_path, [])
+    delete_directory(paths.tmp_dir)
+    create_directory(paths.tmp_dir)
     
-    delete_file(func_json_path)
-    delete_file(prot_json_path)
+    delete_file(paths.reformed_path)
+    delete_file(paths.isolated_path)
+    delete_file(paths.callee_path)
 
-    delete_file(reformed_path)
-    delete_file(isolated_path)
-    delete_file(callee_path)
+    delete_file(f"{paths.database_dir}/flow_moment.txt")
+    delete_file(f"{paths.database_dir}/cov_increased.json")
 
-    delete_file(f"{database_dir}/flow_moment.txt")
-    delete_file(f"{database_dir}/cov_increased.json")
+    delete_file(paths.branch_path)
+    delete_file(paths.line_path)
+    delete_file(paths.priority_path)
 
-    delete_file(func_used_path)
+    delete_file(paths.select_path)
+    # delete_file(paths.is_program_path)
 
-    delete_file(branch_path)
-    delete_file(line_path)
-    delete_file(periodic_path)
-    delete_file(priority_path)
+    delete_file(paths.token_path)
+    delete_file(f"{paths.cov_report_path}")
 
-    delete_file(select_path)
-    # delete_file(is_program_path)
+    delete_file(paths.time_path)
 
-    delete_file(token_path)
-    delete_file(f"{cov_report_path}")
+    write_file(paths.current_cov_path, "")
 
-    delete_file(time_path)
+    init_prompt_count(paths.logging_path)
 
-    init_prompt_count(logging_path)
+    if process_type != "prepare" and os.path.exists(paths.preset_dir):
+        copy_directory(f"{paths.preset_dir}/workspace_{target_cmd}", "./") 
+        copy_directory(f"{paths.preset_dir}/metadata_{target_cmd}", "./") 
 
-    if process_type != "prepare" and os.path.exists(preset_dir):
-        copy_directory(f"{preset_dir}/workspace_{target_cmd}", "./") 
-        copy_directory(f"{preset_dir}/metadata_{target_cmd}", "./") 
+        copy_file(f"{paths.preset_dir}/dependencies.json", paths.database_dir) 
 
-        copy_file(f"{preset_dir}/dependencies.json", database_dir) 
-
-        copy_file(f"{preset_dir}/functions.json", func_json_path)
-        copy_file(f"{preset_dir}/prototypes.json", prot_json_path)
-
-        copy_file(f"{preset_dir}/reformed.json", reformed_path)
-        copy_file(f"{preset_dir}/isolated.json", isolated_path)
-        copy_file(f"{preset_dir}/callee.json", callee_path)
-        copy_file(f"{preset_dir}/callee_main.json", callee_main_path)
+        copy_file(f"{paths.preset_dir}/reformed.json", paths.reformed_path)
+        copy_file(f"{paths.preset_dir}/isolated.json", paths.isolated_path)
+        copy_file(f"{paths.preset_dir}/callee.json", paths.callee_path)
+        copy_file(f"{paths.preset_dir}/callee_main.json", paths.callee_main_path)
         
     else:
-        copy_directory(original_target_dir, work_dir) 
+        copy_directory(original_target_dir, paths.work_dir) 
 
 
-def explorer_main(config):
+def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
     #######################################################
     ###### Setup
     #######################################################
 
-    target_cmd       = config["target_cmd"]
-    process_type     = config["process_type"]
-    llm_choice       = config["llm_choice"]
-    api_key          = config["api_key"]
-    azure_endpoint   = config["azure_endpoint"]
-    max_target_func  = config["max_target_func"]
-    total_time       = config["total_time"]
-    interval         = config["interval"]
-    cov_target       = config["cov_target"] 
-    fixed_explore_time = config["fixed_explore_time"]
-    fixed_version_count = config["fixed_version_count"]
-    explore_time     = config["explore_time"]
-    temperature      = config["temperature"]
-    max_num_test     = config["max_num_test"]
-    max_iterations   = config["max_iterations"]
-    home_dir         = config["home_dir"]
-    directory_id     = config["directory_id"]
-    config_path      = config["config_path"]
-    macro_parser_dir = config["macro_parser_dir"]
-    # explore_fix    = config["explore_fix"]
-    
-    TESTFILE_COUNTER = config["TESTFILE_COUNTER"]
-    AGENT            = config["AGENT"]
-    COUNT_PERIODIC   = config["COUNT_PERIODIC"]
-    WEIGHT           = config["WEIGHT"]
-
     if target_cmd.startswith('openssl'):
-        interval = 120
+        config.interval = 120
 
-    macro_finder = f"{macro_parser_dir}/macro_finder/build/macro-finder"
-    database_path = 'database.json'
-    occupy_path = "instances.json"
-    strategy_path = 'strategy.json'
-
-    explore_fix = "t" # True
-    strategy = ""
-    fixed_metric = None
-    WO_READ = False
-    WO_PATH = False
-    WO_VALIDATION = False
-    
-    GDB_OPTION = False
-    MIN_LENGTH = False
-
-    database_json = read_json(database_path)
-    optimal_centrality = read_json(strategy_path)
-
-    if len(sys.argv) > 5:
-        strategy = str(sys.argv[5])
-        fixed_metric, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(strategy, optimal_centrality[target_cmd])
-    
+    database_json = read_json(config.database_path)
     original_target_dir = database_json[target_cmd]["dir_name"]
     target = get_last_directory(original_target_dir)
 
-    #######################################################
-    ###### Paths
-    #######################################################
+    paths = Paths(
+        target_cmd=target_cmd,
+        process_type=process_type,
+        target=target,
+        directory_id=directory_id,
+        home_dir=home_dir,
+        macro_parser_dir=config.macro_parser_dir,
+    )
 
-    work_dir = f"workspace_{target_cmd}" 
-    meta_dir = f"metadata_{target_cmd}"
-    div_meta_dir = f"div_metadata_{user_id}/{target}"
+    if config.cent is None:
+        # optimal_centrality = read_json(paths.strategy_path)
+        config.cent = get_estimated_cent(paths.strategy_path)
 
-    database_dir = f'database/{target_cmd}'  
-    preset_dir = f"preset/{target_cmd}" 
-    persistent_dir = f"persistent/{target_cmd}"
-    chat_dir = f"chats_{process_type}/{target_cmd}"
-    snap_dir = f"snapdata/{target_cmd}"
-    tmp_dir = f"tmp/{target_cmd}"
-    archive_dir = f"archive/{target_cmd}"
-    tool_dir = f"tools/{target_cmd}"
-    log_dir = f"log/{target_cmd}"
-    seed_dir = f"seeds"
-    transit_dir = f"{home_dir}/transit"
-
-    logging_path = f'{persistent_dir}/log_manager.json'
-    history_path = f'{database_dir}/chat_history.json'
-    dep_json_path = f"{database_dir}/dependencies.json"
-    call_json_path = f"{database_dir}/calls.json"
-    callee_path = f"{database_dir}/callee.json"
-    isolated_path = f"{database_dir}/isolated.json"
-    reformed_path = f"{database_dir}/reformed.json"
-
-    cov_json_path = f"{database_dir}/coverages.json"
-    result_path = f"{database_dir}/result.json"
-
-    branch_path = f"{database_dir}/cov_branch.json" 
-    line_path = f"{database_dir}/cov_line.json" 
-    function_path = f"{database_dir}/cov_function.json" 
-
-    periodic_path = f"{database_dir}/cov_periodic.json"
-    priority_path = f"{database_dir}/cov_priority.json"
-    select_path = f"{database_dir}/cov_select.json"
-    cov_report_path = f"{database_dir}/cov_report.json"
-
-    callee_main_path = f"{database_dir}/callee_main.json"
-    distance_path = f"{database_dir}/distance.json"
-
-    token_path = f"{database_dir}/token_{process_type}.json"
-    count_path = f"{database_dir}/count_{process_type}.json"
-    time_path = f"{database_dir}/cov_time.csv"
-    func_json_path = f"{database_dir}/functions.json"
-    type_json_path = f"{database_dir}/types.json"
-    prot_json_path = f"{database_dir}/prototypes.json"
-
-    all_struct_path = f"{database_dir}/struct_def.json"
-    all_typedef_path = f"{database_dir}/typedef_def.json"
-
-    func_used_path = f"{database_dir}/function_used.json"
-    used_path = f"{database_dir}/used.json"
-    flow_log_path = f"{database_dir}/flow_all.log"
-
-    tmp_branch_path = f"{database_dir}/cov_branch_tmp.json"
-    tmp_line_path = f"{database_dir}/cov_line_tmp.json"
-    tmp_function_path = f"{database_dir}/cov_function_tmp.json"
-
-    taken_directive_path = f"{database_dir}/taken_directive.json"
-    unordered_taken_directive_path = f"{database_dir}/unordered_taken_directive.json"
-    all_directive_path = f"{database_dir}/all_directive.json"
-    is_program_path = f"{database_dir}/is_program.json"
-    all_macros_path = f"{database_dir}/all_macros.json"
-    taken_macros_path = f"{database_dir}/taken_macros.json"
-    guards_path = f"{database_dir}/guards.json"
-    guarded_macros_path = f"{database_dir}/guarded_macros.json"
-    independent_path = f"{database_dir}/independent.json"
-    flag_path = f"{database_dir}/flag.json"
-    const_path = f"{database_dir}/const.json"
-    global_path = f"{database_dir}/globals.json"
-    tool_json_path = f"{tool_dir}/tools.json"
-
-    current_cov_path = f"{database_dir}/current_cov_info.info"
-    write_file(current_cov_path, "")
-
-    target_dir = f"{work_dir}/{target}" # set the target dir
-    run_all_path = f"{target_dir}/run_all.sh"
-    run_test_path = f"{target_dir}/run_test.sh"
-    build_path = f"{target_dir}/c_build.sh"
-
-    if process_type in ["exp", "set", "file", "carpet", "zigzag", "afl_argv"]: #"preset", "gcno", "exp", "set", "file", "carpet", "zigzag", "afl_argv"]:
-        seed_dir = f"{home_dir}/seeds"
-        shell_dir = f"{seed_dir}/shell"
-
-        target_shell_dir = f"{shell_dir}/{target_cmd}_{directory_id}"
-        base_argv_path = f'{transit_dir}/{target_cmd}_{directory_id}.txt'
-
+    fixed_metric, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(
+        config.strategy, config.cent
+    )
 
     #######################################################
     ###### Main pipeline
     #######################################################
 
     AGENT = False
+
+    if config.llm_model is None:
+        if "claude" in config.llm_choice:
+            config.llm_model = get_claude_model(config.llm_choice)
+
     if AGENT is False:
         llm_interface = LLMInterface(
             AGENT=AGENT,
             project_id=target,
-            occupy_path=occupy_path,
-            llm_choice=llm_choice,
-            llm_model=None,
-            temperature=0,
-            api_key=None,
-            timeout=300,
-            output_max=128000, # 4000,
-            context_window=1000000,
-            history_path=history_path,
-            token_path=token_path,
-            database_dir=database_dir,
-            chat_dir=chat_dir,
-            count_path=count_path,
-            exp_data={},
+            occupy_path=paths.occupy_path,
+            llm_choice=config.llm_choice,
+            llm_model=config.llm_model,
+            api_key=config.api_key,
+            azure_endpoint=config.azure_endpoint,
+            temperature=config.temperature,
+            timeout=config.timeout, 
+            output_max=config.output_max, #128000, # 4000,
+            context_window=config.context_window, #1000000,
+            history_path=paths.history_path,
+            token_path=paths.token_path,
+            database_dir=paths.database_dir,
+            chat_dir=paths.chat_dir,
+            count_path=paths.count_path,
         )
-
     else:
-        work_dir_abs = os.path.abspath(work_dir)
-        database_dir_abs = os.path.abspath(database_dir)
-        run_all_abs = os.path.abspath(f"{work_dir}/run_all.sh")
-        rust_build_abs = os.path.abspath(f"{work_dir}/trans_rust/rust_build.sh")
+        work_dir_abs = os.path.abspath(paths.work_dir)
+        database_dir_abs = os.path.abspath(paths.database_dir)
+ 
+        if os.path.exists(paths.session_path):
+            delete_file(paths.session_path)
 
-        session_path = f"{database_dir}/session_id.txt"
-        cost_path = f"{database_dir}/cost_total.txt"
+        if os.path.exists(paths.cost_path):
+            delete_file(paths.cost_path)
 
-        if os.path.exists(session_path):
-            delete_file(session_path)
-
-        if os.path.exists(cost_path):
-            delete_file(cost_path)
-    
         llm_interface = AgentInterface(
             AGENT=AGENT,
             project_id=target,
-            occupy_path=occupy_path,
-            llm_choice=llm_choice,
-            llm_model=None,
-            api_key=None,
+            occupy_path=paths.occupy_path,
+            llm_choice=config.llm_choice,
+            llm_model=config.llm_model,
+            api_key=config.api_key,
+            azure_endpoint=config.azure_endpoint,
             work_dir=work_dir_abs,
             # allowed_tools=["Read", "Grep", "Glob", "Edit", "Write"],
             allowed_tools=[
@@ -685,74 +608,56 @@ def explorer_main(config):
             add_dirs=[database_dir_abs], 
             max_turns=50,
             permission_mode="acceptEdits",
-            session_path=session_path,
-            database_dir=database_dir,
-            chat_dir=chat_dir,
-            count_path=count_path,
-            token_path=token_path,
+            session_path=paths.session_path,
+            database_dir=paths.database_dir,
+            chat_dir=paths.chat_dir,
+            count_path=paths.count_path,
+            token_path=paths.token_path,
         )
     
-    llm_model = get_claude_model(llm_choice)
-    llm_interface = configure_llm(
-        llm_interface,
-        api_key,
-        azure_endpoint,
-        llm_model
-    )
+    if process_type in ["prepare", "gen"]: #"preset", "gcno", "exp", "set", "file", "carpet", "zigzag", "afl_argv"]:
+        initialize(paths, original_target_dir)
+
+    # Start
+    print(f"\n=============== Start of {process_type} ===============\n\n")
     
-    # start the hybrid
-    start_time = time.time()
     will_show = True
     targeted_set = set()
+    ommited_files = []
+
+    start_time = time.time()
 
     try:
-        ommited_files = []
-        target_funcs = []
-        
-        if process_type in ["prepare", "core"]: #"preset", "gcno", "exp", "set", "file", "carpet", "zigzag", "afl_argv"]:
-            initialize(
-                original_target_dir, meta_dir, target_dir, work_dir, snap_dir, database_dir, 
-                chat_dir, tmp_dir, preset_dir, all_struct_path, all_typedef_path, 
-                type_json_path, func_json_path, prot_json_path, reformed_path, isolated_path, 
-                callee_path, callee_main_path, func_used_path, branch_path, line_path, periodic_path, logging_path,
-                priority_path, select_path, is_program_path, token_path, cov_report_path, time_path, process_type, target_cmd
-            )
+        if process_type == "gen":
+            atexit.register(partial(get_final_report, paths, 
+                process_type, start_time, target_cmd, target, original_target_dir,
+                config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
+                fixed_metric, config.llm_choice, config.llm_model, config.strategy,
+                config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND        
+            )) 
 
-        if process_type == "core":
-            atexit.register(partial(get_final_report,
-                            target_dir, process_type, start_time, original_target_dir,
-                            archive_dir, result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
-                            fixed_explore_time, temperature, total_time, interval, 
-                            fixed_metric, llm_choice, llm_model, strategy,
-                            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-                            cov_report_path, select_path, database_dir, token_path,
-                            config_data)) 
-        
-
-        print(f"\n=============== Start of {process_type} ===============\n\n")
-        
         if process_type == "tool":
+            if not os.path.exists(paths.tool_dir):
+                create_directory(paths.tool_dir)
 
-            if not os.path.exists(tool_dir):
-                create_directory(tool_dir)
-
-            find_tool(target, target_cmd, target_dir, llm_interface, os_version)
+            find_tool(target, target_cmd, paths.target_dir, llm_interface, os_version)
 
         elif process_type == "prepare":
             print("Preparing ...")
             executable = True
-            executable, main_list = search_main(process_type, target, run_test_path, dep_json_path, build_path, 
-                                                target_dir, meta_dir, database_dir, 
-                                                all_struct_path, all_typedef_path, ommited_files,
-                                                macro_finder, div_meta_dir, taken_directive_path, unordered_taken_directive_path,
-                                                all_directive_path, is_program_path, all_macros_path, taken_macros_path,
-                                                guards_path, guarded_macros_path, independent_path, flag_path, const_path, global_path) 
+            executable, main_list = search_main(
+                process_type, target, paths.run_test_path, paths.dep_json_path, paths.build_path, 
+                paths.target_dir, paths.meta_dir, paths.database_dir, ommited_files,
+                paths.macro_finder, paths.div_meta_dir, paths.taken_directive_path, paths.unordered_taken_directive_path,
+                paths.all_directive_path, paths.is_program_path, paths.all_macros_path, paths.taken_macros_path,
+                paths.guards_path, paths.guarded_macros_path, paths.independent_path, paths.flag_path, paths.const_path, paths.global_path
+            ) 
 
             print("---------------- Result ----------------")
             main_paths = []
             for entry in main_list:
                 def_file_path, def_start_line, _ = parse_def_loc(entry['definition'])
-                base_path = remove_base_path(def_file_path, f"{home_dir}/{target_dir}")
+                base_path = remove_base_path(def_file_path, f"{home_dir}/{paths.target_dir}")
                 main_paths.append(f"{original_target_dir}/{base_path}")
 
             if len(main_list) > 1:
@@ -795,70 +700,73 @@ def explorer_main(config):
                 write_json(f"{home_dir}/metadata_gm/workspace_gm/GraphicsMagick-1.3.45/utilities/gm_c.json", json_data)
 
             # get dependencies
-            analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_path, reformed_path, isolated_path)
+            analyze_call_dependencies(
+                paths.target_dir, paths.meta_dir, paths.database_dir, paths.is_program_path, paths.reformed_path, paths.isolated_path
+            )
 
             # get call relationship
-            analyze_call_relationship(meta_dir, callee_path, target_dir, is_program_path)
+            analyze_call_relationship(
+                paths.meta_dir, paths.callee_path, paths.target_dir, paths.is_program_path
+            )
 
             # get main-function surrounded 
             get_related_main(
-                database_json, target_cmd, home_dir, WEIGHT, 
-                work_dir, callee_main_path, callee_path, distance_path, 
-                meta_dir, database_dir
+                program_dir, database_json, target_cmd, home_dir, config.WEIGHT, 
+                paths.work_dir, paths.callee_main_path, paths.callee_path, paths.distance_path, 
+                paths.meta_dir, paths.database_dir
             )
 
-            graph_metrics, G = build_graph(callee_path, callee_main_path)
-
+            graph_metrics, G = build_graph(paths.callee_path, paths.callee_main_path)
             write_metrics(target_cmd, graph_metrics)
 
-            delete_directory(preset_dir)
-            copy_directory(meta_dir, preset_dir)
-            copy_file(is_program_path, preset_dir)
-            copy_file(dep_json_path, preset_dir)
+            delete_directory(paths.preset_dir)
+            copy_directory(paths.meta_dir, paths.preset_dir)
+            copy_file(paths.is_program_path, paths.preset_dir)
+            copy_file(paths.dep_json_path, paths.preset_dir)
 
-            copy_file(func_json_path, preset_dir)
-            copy_file(prot_json_path, preset_dir)
-
-            copy_file(reformed_path, preset_dir)
-            copy_file(isolated_path, preset_dir)
-            copy_file(callee_path, preset_dir)
-            copy_file(callee_main_path, preset_dir)
+            copy_file(paths.reformed_path, paths.preset_dir)
+            copy_file(paths.isolated_path, paths.preset_dir)
+            copy_file(paths.callee_path, paths.preset_dir)
+            copy_file(paths.callee_main_path, paths.preset_dir)
 
         elif process_type == "gcno":
-            # work_dir comes from afl's directory with gcno
-            delete_directory(work_dir)
-            copy_directory(original_target_dir, work_dir)
-            run_script(process_type, database_dir, build_path, 10000, True, None, "both")
-            copy_directory(work_dir, preset_dir)
+            # paths.work_dir comes from afl's directory with gcno
+            delete_directory(paths.work_dir)
+            copy_directory(original_target_dir, paths.work_dir)
+            run_script(process_type, paths.database_dir, paths.build_path, 10000, True, None, "both")
+            copy_directory(paths.work_dir, paths.preset_dir)
 
 
-        elif process_type == "core":
-            # func_sum = get_func_sum(callee_main_path)
-            check_command_availability(tool_json_path, target_cmd, target)
+        elif process_type == "gen":
+            # func_sum = get_func_sum(paths.callee_main_path)
+            check_command_availability(paths.tool_json_path, target_cmd, target)
         
             # Set at the start of execution
             set_timeout(
-                total_time, start_time, original_target_dir, archive_dir, 
-                result_path, dep_json_path, meta_dir, logging_path, target_cmd, target
+                config.total_time, start_time, process_type, target_cmd, target, 
+                paths.target_dir, original_target_dir, paths.archive_dir, paths.meta_dir, 
+                paths.result_path, paths.dep_json_path, paths.logging_path,
+                config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
+                fixed_metric, config.llm_choice, config.llm_model, config.strategy,
+                paths.chat_dir, paths.snap_dir, config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
+                paths.cov_report_path, paths.select_path, paths.database_dir, paths.token_path
             ) 
-            print(f"Target_dir: {target_dir}")
-            create_permissioned_file(run_test_path)
+            print(f"Target_dir: {paths.target_dir}")
+            create_permissioned_file(paths.run_test_path)
 
-            graph_metrics, G = build_graph(callee_path, callee_main_path)
+            graph_metrics, G = build_graph(paths.callee_path, paths.callee_main_path)
 
             error = None
             std_out = None
             cycle = 1
             total_start_time = time.time()
-            clear_gcda_files(target_dir)
-            tool_string, cmd_self = get_tool_string(tool_json_path, target_cmd, target)
+            clear_gcda_files(paths.target_dir)
+            tool_string, cmd_self = get_tool_string(paths.tool_json_path, target_cmd, target)
 
             # Write the first testcase
             ask_basic_command(
-                llm_interface, target_cmd, max_iterations, tool_string, strategy, TESTFILE_COUNTER, WO_VALIDATION,
-                target_dir, work_dir, database_dir, snap_dir, log_dir, original_target_dir, 
-                is_program_path, meta_dir, build_path, run_test_path, branch_path, function_path, 
-                flow_log_path, database_json
+                paths, llm_interface, target_cmd, 
+                database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
             )
 
             target_function_count = 0
@@ -870,30 +778,28 @@ def explorer_main(config):
                     break
 
                 elapsed_time = time.time() - total_start_time
-
-                if target_function_count >= max_target_func:
+                if target_function_count >= config.max_target_func:
                     print(f"Reached {target_function_count} functions, so stopping")
                     minutes = int(elapsed_time // 60)
                     print(f"{elapsed_time:.2f} seconds ({minutes} min) elapsed")
                     break
 
                 if cycle == 1:
-                    if COUNT_PERIODIC is True:
+                    if config.COUNT_PERIODIC is True:
                         start_periodic_server(
-                            process_type, strategy, interval, target_dir, azure_endpoint, target_function_count, tmp_branch_path, tmp_line_path, tmp_function_path
+                            process_type, config.strategy, config.interval, paths.target_dir, config.azure_endpoint, target_function_count, 
+                            paths.tmp_branch_path, paths.tmp_line_path, paths.tmp_function_path
                         )                
 
                 # Explore pathes
                 try:
                     current_coverage, target_entry = explore_path(
-                        llm_interface, strategy, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, target_dir, is_program_path, 
-                        meta_dir, work_dir, database_dir, original_target_dir, snap_dir, tmp_dir, log_dir, 
-                        build_path, run_test_path, branch_path, line_path, function_path, flow_log_path, dep_json_path, time_path, token_path, select_path, 
-                        current_cov_path, cov_report_path, fixed_metric, fixed_version_count, fixed_explore_time, explore_fix,
-                        database_json, priority_path, error, std_out, callee_path, callee_main_path, graph_metrics, G,
-                        WO_READ, WO_PATH, WO_VALIDATION, MIN_LENGTH, GDB_OPTION, TESTFILE_COUNTER
+                        paths, llm_interface, config.strategy, tool_string, config.max_num_test, config.cov_target, current_coverage, targeted_set, target_cmd, 
+                        original_target_dir, fixed_metric, config.fixed_version_count, config.fixed_explore_time, config.explore_fix,
+                        database_json, error, std_out, graph_metrics, G,
+                        WO_READ, WO_PATH, WO_VALIDATION, config.MIN_LENGTH, config.GDB_OPTION, config.testfile_counter
                     ) 
-                    print(f"Target_dir: {target_dir}")
+                    print(f"Target_dir: {paths.target_dir}")
 
                     # repair branches
                     if target_entry['is_covered'] is True and target_entry['is_full_branch_covered'] is False:
@@ -905,16 +811,15 @@ def explorer_main(config):
                     #     'target_branch' : 2,
                     #     'target_end_line' : 32,
                     #     'explore_time' : 300,
-                    #     'original_run_test_path' : run_test_path,
+                    #     'original_run_test_path' : paths.run_test_path,
                     # }
                     # TEST = True
                     # if TEST is True:
                         try:
-                            explore_branch(llm_interface, strategy, cov_target, target_cmd, target_dir, target_entry, is_program_path, meta_dir, build_path, run_test_path,
-                                work_dir, original_target_dir, database_dir, snap_dir, tmp_dir, log_dir,
-                                dep_json_path, time_path, token_path, max_num_test,
-                                branch_path, line_path, function_path, cov_report_path, select_path, fixed_explore_time,
-                                flow_log_path, database_json, priority_path, error, std_out, callee_path, graph_metrics, G
+                            explore_branch(
+                                paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry,
+                                original_target_dir, config.max_num_test, config.fixed_explore_time, explore_fix,
+                                database_json, error, std_out, graph_metrics, G
                             )
                             # current_coverage = explore_branch(
                         except Exception as e:
@@ -933,10 +838,10 @@ def explorer_main(config):
 
 
                 branch_coverage, line_coverage, func_coverage = get_coverage(
-                    cov_target, target_dir, database_dir, branch_path, line_path, function_path, 
-                    is_program_path, current_cov_path
+                    config.cov_target, paths.target_dir, paths.database_dir, paths.branch_path, paths.line_path, paths.function_path, 
+                    paths.is_program_path, paths.current_cov_path
                 )
-                save_coverage_report(cov_target, cov_report_path, token_path, branch_coverage, line_coverage, func_coverage, None)
+                save_coverage_report(config.cov_target, paths.cov_report_path, paths.token_path, branch_coverage, line_coverage, func_coverage, None)
 
                 if strategy == "wo_t":
                     print("Finished: WO_TARGET senario done!")
@@ -949,31 +854,31 @@ def explorer_main(config):
 
         elif process_type == "exp":
 
-            empty_id = export_to_seed_dir(snap_dir, shell_dir, target_cmd)
+            empty_id = export_to_seed_dir(paths.snap_dir, paths.shell_dir, target_cmd)
 
             print(f"\nNext action:")
             print(f"python3 run.py {target_cmd} set {empty_id}")
 
         elif process_type == "set": # "car_prepare"  # prepare the set directory
 
-            if not os.path.exists(f"{transit_dir}"):
-                create_directory(f"{transit_dir}")
+            if not os.path.exists(f"{paths.transit_dir}"):
+                create_directory(f"{paths.transit_dir}")
                 
             generate_base_argv(
-                target_shell_dir, base_argv_path,
-                process_type, target_dir, database_dir, database_json, target_cmd, directory_id
+                paths.target_shell_dir, paths.base_argv_path,
+                process_type, paths.target_dir, paths.database_dir, database_json, target_cmd, directory_id
             )
 
-            print(f"Input argvs: saved at {base_argv_path}")
+            print(f"Input argvs: saved at {paths.base_argv_path}")
         
         elif process_type == "file":
 
-            input_file_dir = f"{seed_dir}/pilot/input/{target_cmd}_{directory_id}"
+            input_file_dir = f"{paths.seed_dir}/pilot/input/{target_cmd}_{directory_id}"
 
             generate_input_files(
-                base_argv_path, input_file_dir,
+                paths.base_argv_path, input_file_dir,
                 target_cmd, directory_id, llm_interface,
-                database_dir, target_dir, transit_dir, database_json, seed_dir
+                paths.database_dir, paths.target_dir, paths.transit_dir, database_json, paths.seed_dir
             )
 
             print(f"\nInput files: saved at {input_file_dir}")
@@ -981,18 +886,18 @@ def explorer_main(config):
 
         elif process_type == "carpet":
 
-            carpet_argv_path = f'{seed_dir}/pilot/carpet_argvs/{target_cmd}_{directory_id}.txt'
+            carpet_argv_path = f'{paths.seed_dir}/pilot/carpet_argvs/{target_cmd}_{directory_id}.txt'
   
             generate_carpet_argv(
-                base_argv_path, carpet_argv_path,
-                llm_interface, chat_dir, transit_dir, database_dir, target_cmd, directory_id
+                paths.base_argv_path, carpet_argv_path,
+                llm_interface, paths.chat_dir, paths.transit_dir, paths.database_dir, target_cmd, directory_id
             )
             print(f"\nSaved: {carpet_argv_path}")
             
 
         elif process_type == "zigzag": 
 
-            zigzag_argv_path = f"{seed_dir}/pilot/keyword_dict/list_{target_cmd}_{directory_id}.txt"
+            zigzag_argv_path = f"{paths.seed_dir}/pilot/keyword_dict/list_{target_cmd}_{directory_id}.txt"
             
             generate_zigzag_argv(
                 base_argv_path, zigzag_argv_path,
@@ -1002,12 +907,12 @@ def explorer_main(config):
             
         elif process_type == "afl_argv":
 
-            #input_path = f"{transit_dir}/afl_{target_cmd}_{directory_id}.txt"
-            afl_argv_dir = f"{seed_dir}/pilot/afl_argvs/{target_cmd}_{directory_id}"
+            #input_path = f"{paths.transit_dir}/afl_{target_cmd}_{directory_id}.txt"
+            afl_argv_dir = f"{paths.seed_dir}/pilot/afl_argvs/{target_cmd}_{directory_id}"
 
             generate_afl_argv(
-                base_argv_path, afl_argv_dir,
-                chat_dir, transit_dir, target_cmd, directory_id
+                paths.base_argv_path, afl_argv_dir,
+                paths.chat_dir, paths.transit_dir, target_cmd, directory_id
             )
 
         pass
@@ -1038,71 +943,20 @@ if __name__ == "__main__":
     directory_id = None
     if process_type in ["set", "file", "carpet", "zigzag", "afl_argv"]:
         directory_id = str(sys.argv[3]) 
-    # explore_fix = str(sys.argv[2])
-    # llm_argument = str(sys.argv[4])
 
-    user_id = "0000"
-    home_dir  = f"/root/PILOT"
+    home_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = f"{home_dir}/config.json"
-    macro_parser_dir = "/root/kiso-parser-macro"
+    sys_config_path = f"{home_dir}/config_sys.json"
 
-    max_target_func = 5
-    total_time = 180000 # 5400 #3600 #14400 
-    interval = 30 #5 #30  # The measurement interval
-    fixed_explore_time = 250
-    fixed_version_count = 3 # 2
-    cov_target = "function"  # "line" # "function" # "branch"
-    explore_time = 300 #180
-    temperature = 0 #1 #0
-    max_num_test = 20
-    max_iterations = 20
-    TESTFILE_COUNTER = 0
-    AGENT = True 
-    COUNT_PERIODIC = True
-    WEIGHT = None
+    user_config = read_json(f"{config_path}")
+    sys_config = read_json(f"{sys_config_path}")
 
-    config_data = read_json(f"{config_path}")
-
-    llm_choice     = config_data["llm_choice"]
-    api_key        = config_data["api_key"]
-    azure_endpoint = config_data["azure_endpoint"]
-    os_vendor      = config_data['os_vendor']
-    os_version     = config_data['os_version'] # os_version = "Ubnutu 20.04"
-    # "os_vendor" : "Mac OS",
-    # "os_version" : "Sonoma 14.3",
-
-    config = {
-        "process_type": process_type,
-        #"original_dir": original_dir,
-        #"llm_argument" : llm_argument,
-        # "explore_fix" : explore_fix,
-        "target_cmd" : target_cmd,
-        "user_id": user_id,
-        "llm_choice": llm_choice,
-        "api_key": api_key,
-        "azure_endpoint": azure_endpoint,
-        "max_target_func" : max_target_func,
-        "max_iterations" : max_iterations,
-        "total_time" : total_time,
-        "interval" : interval,
-        "fixed_explore_time" : fixed_explore_time,
-        "fixed_version_count" : fixed_version_count,
-        "cov_target" : cov_target,
-        "explore_time" : explore_time,
-        "temperature" : temperature, 
-        "max_num_test" : max_num_test,
-        "home_dir" : home_dir,
-        "directory_id" : directory_id,
-        "config_path" : config_path,
-        "macro_parser_dir" : macro_parser_dir,
-        "TESTFILE_COUNTER" : TESTFILE_COUNTER,
-        "AGENT" : AGENT,
-        "COUNT_PERIODIC" : COUNT_PERIODIC,
-        "WEIGHT" : WEIGHT,
-    }
+    config = merge_config(user_config, sys_config)
 
     try:
-        explorer_main(config)  
+        explorer_main(
+            target_cmd, process_type, directory_id, home_dir, config
+        )  
 
     except:
         will_show = False
@@ -1117,10 +971,11 @@ python3 run.py tiffcp_old tool
 python3 run.py tiffcp_old prepare
 python3 run.py tiffcp_old preset
 python3 run.py tiffcp_old gcno
-python3 run.py tiffcp_old core
+python3 run.py tiffcp_old gen
 
 python3 run.py tiffcp_old exp
 python3 run.py tiffcp_old set 000
+python3 run.py tiffcp_old file 000
 python3 run.py tiffcp_old carpet 000
 python3 run.py tiffcp_old zig 000
 python3 run.py tiffcp_old afl_argv 000

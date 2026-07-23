@@ -26,6 +26,7 @@ from utils_api import (
     get_lined_code,
     find_matching_path,
     run_script,
+    run_script_pty,
 )
 
 from llm_api import (
@@ -40,6 +41,7 @@ from llm_api import (
 )
 
 from pilot_lib.utils import (
+    get_random_void,
     get_metadata,
     get_related_data,
     get_coverage,
@@ -49,12 +51,19 @@ from pilot_lib.utils import (
     parse_function_id,
     get_metrics,
     get_pure_cmd,
+    get_start_line,
     append_list_to_file,
     RepairContext,
+    get_function_coverage,
+    get_branch_covered,
+    get_function_centrality,
 )
 
 from pilot_lib.tool import get_tool_string
 
+from pilot_lib.graph import (
+    build_graph,
+)
 
 def clear_gcda_files(target_dir):
     print("Deleting coverage files")
@@ -137,74 +146,6 @@ def check_command_availability(tool_json_path, target_cmd, target) -> Dict[str, 
         raise ValueError("tool_string is empty")
         
     return availability
-
-
-def set_timeout(
-    seconds, start_time, process_type, target_cmd, target, 
-    target_dir, original_target_dir, archive_dir, meta_dir, 
-    result_path, dep_json_path, logging_path,
-    fixed_explore_time, temperature, total_time, interval, 
-    fixed_metric, llm_choice, llm_model, strategy,
-    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-    cov_report_path, select_path, database_dir, token_path
-):
-    def timeout_handler(signum, frame):
-        sys.stderr.write(f"Timeout ({seconds} seconds) occurred\n")
-        stop_periodic_server()  # Stop the periodic thread
-
-        get_final_report(
-            process_type, start_time, 
-            target_dir, original_target_dir, archive_dir, 
-            result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
-            fixed_explore_time, temperature, total_time, interval, 
-            fixed_metric, llm_choice, llm_model, strategy,
-            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, SURROUND, 
-            cov_report_path, select_path, database_dir, token_path,
-            config_data
-        )
-        os._exit(1)  # Terminate the entire process
-
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(seconds)
-
-
-periodic_running = True
-periodic_start_time = None  # Variable to record the start time
-
-def run_periodic(
-    interval, target_dir, azure_endpoint, target_function_count, 
-    tmp_branch_path, tmp_line_path, tmp_function_path
-):
-    """Keep running the function against the directory at the specified interval"""
-
-    global periodic_running, periodic_start_time
-    periodic_start_time = time.time()  # Record the start time
-
-    while periodic_running:
-        elapsed_time = time.time() - periodic_start_time
-        minutes = int(elapsed_time // 60)  # Compute the minutes
-        if azure_endpoint is None:
-            print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min)")
-        else:
-            print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min), region: {azure_endpoint}")
-
-        print(f"Target function count: {target_function_count}")
-
-        branch_path = tmp_branch_path
-        line_path = tmp_line_path
-        function_path = tmp_function_path
-
-        time.sleep(interval)  # Wait for the specified number of seconds
-        
-
-def start_periodic_server(
-    process_type, strategy, interval, target_dir, azure_endpoint, target_function_count, 
-    tmp_branch_path, tmp_line_path, tmp_function_path
-):
-    if process_type != "prepare" and process_type != "preset" and process_type != "gcno":
-        periodic_thread = threading.Thread(target=run_periodic, args=(interval, target_dir, azure_endpoint, target_function_count, tmp_branch_path, tmp_line_path, tmp_function_path))
-        periodic_thread.daemon = True  # Terminate together when the main thread ends
-        periodic_thread.start()
 
 
 def get_tool_cmd(strategy, tool_string):
@@ -319,7 +260,7 @@ def ask_basic_command_llm(ctx):
                          f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                          "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
                          #"- --run_fuzz is used for fuzzing, but now it's for executing commands, so please don't include the --run_fuzz option when executing the program in the shell code.",
-                         f"- Please do not include build execution (./{build_path}) in the shell code in {ctx.paths.run_test_path}.",
+                         f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                          #f"- If modifying {ctx.paths.run_test_path} still cannot generate test cases that pass through the specified branch, please use gdb_execute mode once to confirm which functions the current test case is passing through, and generate shell code that accurately passes through the specified line.",
                          f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute commands using only existing binaries.",
                          #f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
@@ -333,7 +274,7 @@ def ask_basic_command_llm(ctx):
                          f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                          "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                          #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                         f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                         f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                          #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                          "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                          "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
@@ -353,8 +294,8 @@ def ask_basic_command_llm(ctx):
 
     prompt.extend(["", "## Directory Structure of the Target Program:"]) 
     directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
-    write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-    directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
+    write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+    directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
     prompt.extend([directory_structure, ""])
     
 
@@ -408,21 +349,21 @@ def ask_basic_command_llm(ctx):
     sum_deleted_list = []
 
     sum_slice_list = []
-    repair_count = 0
+    ctx.repair_count = 0
     count = 0
     mode = None
 
     while(1):
-        error, std_out, repair_count = run_script(
-            run_test_path, 100, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
+        error, std_out, ctx.repair_count = run_script(
+            ctx.paths.run_test_path, 100, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
         )
-        if WO_VALIDATION is True:
+        if ctx.WO_VALIDATION is True:
             break
 
         if error is None and (ongoing_in_mode_flag is False or ongoing_in_mode_flag is None):
             break
 
-        if target_cmd == "editcap_old":
+        if ctx.target_cmd == "editcap_old":
             break
 
         prompt = []
@@ -432,7 +373,7 @@ def ask_basic_command_llm(ctx):
                    ])
 
         if count == 0:
-            tool_cmd = get_tool_cmd(strategy, tool_string)
+            tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
             prompt.extend(["", "## Response rules:",
                          f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                          f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
@@ -455,7 +396,7 @@ def ask_basic_command_llm(ctx):
                          f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                          "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                          #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                         f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                         f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                          #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                          "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                          #"- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
@@ -524,8 +465,8 @@ def ask_basic_command_llm(ctx):
         if count > 1:
             prompt.extend(["", "## Directory Structure of the Target Program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
-            write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-            directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 10000)
+            write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+            directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 10000)
             prompt.extend([directory_structure, ""])
 
         rsp_json = ask_llm(prompt, "continue", ctx.llm_interface)
@@ -582,7 +523,7 @@ def ask_basic_command_agent(ctx):
 
     # --- Agent execution environment: inspect source + author the shell script.
     #     No build / recompile; the script is run externally by run_script. ---
-    agent = agent_interface
+    agent = ctx.llm_interface
     agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
@@ -595,7 +536,7 @@ def ask_basic_command_agent(ctx):
 
     error = None
     std_out = None
-    repair_count = 0
+    ctx.repair_count = 0
     count = 0
     mode = None
 
@@ -614,7 +555,7 @@ def ask_basic_command_agent(ctx):
                            f"I want to see the simplest command invocation with minimal options, just specifying an input file and executing it."
                            ])
 
-        tool_cmd = get_tool_cmd(strategy, tool_string)
+        tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
         prompt.extend(["", "## Response rules:",
                              f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                              f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
@@ -623,7 +564,7 @@ def ask_basic_command_agent(ctx):
                              f"- The {pure_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                              f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                              "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
-                             f"- Please do not include build execution (./{build_path}) in the shell code in {ctx.paths.run_test_path}.",
+                             f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                              f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute commands using only existing binaries.",
                              f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
                              f"{tool_cmd}",
@@ -644,7 +585,7 @@ def ask_basic_command_agent(ctx):
 
         # --- current content of run_test_path ---
         prompt.extend([f"\n## Current content of the {ctx.paths.run_test_path} file:"])
-        file_string = get_lined_code(rctx.paths.un_test_path, ctx.paths.work_dir)
+        file_string = get_lined_code(ctx.paths.run_test_path, ctx.paths.work_dir)
         prompt.extend([f'{file_string}\n'])
 
         # --- previous execution feedback (from the original error / std_out injection) ---
@@ -673,22 +614,22 @@ def ask_basic_command_agent(ctx):
         else:
             memory_type = "continue"
 
-        result = ask_agent(prompt, memory_type, agent)
+        result = ask_agent(prompt, memory_type, ctx.llm_interface)
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
 
         # --- run the script the agent just wrote ---
-        error, std_out, repair_count = run_script(
+        error, std_out, ctx.repair_count = run_script(
             ctx.paths.run_test_path, 100, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
         )
 
-        if WO_VALIDATION is True:
+        if ctx.WO_VALIDATION is True:
             break
 
         if error is None:
             break
 
-        if target_cmd == "editcap_old":
+        if ctx.target_cmd == "editcap_old":
             break
 
         count += 1
@@ -709,23 +650,18 @@ def ask_basic_command(
         cov_target=cov_target,
         strategy=strategy,
         max_num_test=max_num_test,
-        entry=entry,
+        entry=None,
         original_run_test_path=target_entry['original_run_test_path'],
         repair_count=repair_count,
-        target_path=target_path,
-        target_function=target_function,
-        target_uncovered_ratio=target_uncovered_ratio,
-        target_branch=target_branch,
-        target_line=target_line,
-        target_end_line=target_end_line,
+        # target_path=target_path,
+        # target_function=target_function,
+        # target_uncovered_ratio=target_uncovered_ratio,
+        # target_branch=target_branch,
+        # target_line=target_line,
+        # target_end_line=target_end_line,
         target_cmd=target_cmd,
         execute_path=execute_path,
         cmd_list=cmd_list,
-        test_path=None,
-        file_path=None,
-        test_id=None,
-        function_name=None,
-        main_flag=None,
         explore_time=explore_time,
         cmd_exe=cmd_exe,
         notes=notes,
@@ -737,7 +673,7 @@ def ask_basic_command(
         ask_basic_command_agent(ctx)
 
 
-def write_time(time_path, activity, action, repair_target, timestamp=None):
+def write_time(time_path, activity, action, strategy, timestamp=None):
     formatted_time = None
 
     if timestamp is not None:
@@ -754,7 +690,7 @@ def write_time(time_path, activity, action, repair_target, timestamp=None):
     
 
     with open(time_path, 'a') as f:
-        f.write(f"{activity},{repair_target},{action},{timestamp},{formatted_time}\n")
+        f.write(f"{activity},{strategy},{action},{timestamp},{formatted_time}\n")
 
 
 
@@ -895,13 +831,38 @@ autonomous_template = f"""
 }}
 """
 
-def repair_test_llm(repair_target, ctx): 
+read_template = f"""
+# In "modify_data" mode
+{{
+    "mode" : "modify_data",
+    "answer" : [
+        {{
+            "file_path" : (file path),
+            "start_line" : (start line of the original code to be deleted and modified; must reflect the original range to be replaced),
+            "end_line" : (end line of the original code to be deleted and modified; must reflect the original range to be replaced),
+            "is_deletion" : True for deletion only, False for modification,
+            "overwrite_all" : Flag for full file modification. If true, overwrites the whole file; if false, modifies only the specified lines
+            "modified_data" : (content of the corrected code without omissions)
+        }},
+        {{
+            "file_path" : (file path),
+            "start_line" : (start line of the original code to be deleted and modified; must reflect the original range to be replaced),
+            "end_line" : (end line of the original code to be deleted and modified; must reflect the original range to be replaced),
+            "is_deletion" : True for deletion only, False for modification,
+            "overwrite_all" : Flag for full file modification. If true, overwrites the whole file; if false, modifies only the specified lines
+            "modified_data" : (content of the corrected code without omissions)
+        }},...
+    ],
+    "ongoing_in_mode": "true if, within a single mode such as 'read_data', the 'answer' response is long and will continue further; otherwise, false.",
+    "ongoing": "true if the response will continue across different modes; otherwise, false.",
+    "reason": "Explanation of the response (insert here if necessary)."
+}}
+"""
 
-    process_type = repair_target 
+def repair_test_llm(ctx): 
+
     output_max = ctx.llm_interface.output_max
-    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
-    execute_path = f"{ctx.paths.work_dir}/execute.sh"
-    def_start_line = ctx.entry.target_line         
+    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"      
     pure_cmd = get_pure_cmd(ctx.target_cmd)
 
     initial_error = None
@@ -920,8 +881,8 @@ def repair_test_llm(repair_target, ctx):
     delete_file(ctx.paths.run_test_path)
     create_permissioned_file(ctx.paths.run_test_path)
 
-    execute_dir = os.path.dirname(os.path.normpath(execute_path))
-    create_permissioned_file(execute_path)
+    execute_dir = os.path.dirname(os.path.normpath(ctx.execute_path))
+    create_permissioned_file(ctx.execute_path)
 
 
     if not (ctx.WO_READ):
@@ -933,8 +894,8 @@ def repair_test_llm(repair_target, ctx):
     ref_files = []
     dep_data = read_json(ctx.paths.dep_json_path)
 
-    if repair_count is None:
-        repair_count = 1 # one round for convert_llm
+    if ctx.repair_count is None:
+        ctx.repair_count = 1 # one round for convert_llm
 
     modified_file_list = []
 
@@ -948,11 +909,11 @@ def repair_test_llm(repair_target, ctx):
     ongoing_flag = None # False
     mode = None
     elapsed_time = None
-    testcase_num = max_num_test
+    testcase_num = ctx.max_num_test
     timestamp = None
 
     llm_start_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "start", repair_target, llm_start_time)
+    write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
 
     #global previous_coverage
     branch_coverage, line_coverage, function_coverage = get_coverage(
@@ -961,11 +922,11 @@ def repair_test_llm(repair_target, ctx):
         ctx.paths.is_program_path, ctx.paths.current_cov_path
     )
     
-    if cov_target == "function":
+    if ctx.cov_target == "function":
         initial_coverage = function_coverage
         target_statement = "target function"
     
-    elif cov_target == "branch":
+    elif ctx.cov_target == "branch":
         initial_coverage = branch_coverage
         target_statement = "target line"
 
@@ -975,23 +936,23 @@ def repair_test_llm(repair_target, ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > fixed_version_count:
+        if version_count > ctx.fixed_version_count:
             break
 
         if mode != "read_data":
-            if (repair_count != 1 and repair_target == "explore_path"):
+            if (ctx.repair_count != 1 and ctx.strategy == "base"):
                 # Update current_coverage
                 error, std_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
-                    process_type, cov_target, ctx.paths.run_test_path, entry, branch_path, line_path, function_path, 
+                    ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
-                    current_coverage, function_branch_path, is_program_path, current_cov_path
+                    current_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 )
                 
                 if ctx.WO_VALIDATION is True:
                     break
 
                 version_count += 1
-                print(f"\nJudge at {entry}: {is_increased}")
+                print(f"\nJudge at {ctx.entry}: {is_increased}")
 
                 save_coverage_report(
                     ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, current_coverage, line_coverage, function_coverage, "llm"
@@ -1000,39 +961,37 @@ def repair_test_llm(repair_target, ctx):
                 if is_covered is True:
                     break
 
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             if error is None and mode != "read_data" and ongoing_flag is False:
                 if is_covered is True: 
                     break 
 
-        elif repair_target == "no_target":
-            if repair_count > 1:
+        elif ctx.strategy == "wo_t":
+            if ctx.repair_count > 1:
                 break
             
         elif error is None and mode != "read_data" and ongoing_flag is False:
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if is_covered is True: 
                     break           
             else:
                 break
 
-        if repair_target == "explore_path":
-            target_path = entry['target_path']
-
-            if repair_count == 1:
+        if ctx.strategy == "base":
+            if ctx.repair_count == 1:
                 prompt = []
-                if cov_target == "branch":
+                if ctx.cov_target == "branch":
                     prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file.",
                                 f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                                 ])
-                elif cov_target == "function":
+                elif ctx.cov_target == "function":
                     prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command that will reach the {ctx.entry.target_function} function of the {ctx.entry.target_path} file (Line {ctx.entry.target_line}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                                 ])
 
                 
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 if not ctx.WO_PATH:
                     prompt.extend(["", "## Response rules:",
                         f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
@@ -1057,7 +1016,7 @@ def repair_test_llm(repair_target, ctx):
                         f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                         "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                         #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                         "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
@@ -1086,7 +1045,7 @@ def repair_test_llm(repair_target, ctx):
                         f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                         "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                         #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                         "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
@@ -1096,7 +1055,7 @@ def repair_test_llm(repair_target, ctx):
                 
             else:
                 if not (ctx.GDB_OPTION and explore_count > 3):
-                    if cov_target == "branch":
+                    if ctx.cov_target == "branch":
                         prompt = [f"With the current code, we have not yet been able to pass through the specified branch. ",
                                 f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry.target_path} file's {ctx.entry.target_function} function's line {ctx.entry.target_line} branch {ctx.entry.target_branch}",
                                 f"Please follow the instructions below and select {mode_statement} to generate your response."
@@ -1114,9 +1073,9 @@ def repair_test_llm(repair_target, ctx):
                                     ])
                         prompt.extend(ctx.notes)
 
-                    elif cov_target == "function":
+                    elif cov.cov_target == "function":
                         prompt = [f"With the current code, we have not yet been able to reach the target function. ",
-                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {def_start_line}).",
+                                f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {ctx.entry.target_line}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 f"Please follow the instructions below and select {mode_statement} to generate your response."
                                 ]
@@ -1135,12 +1094,12 @@ def repair_test_llm(repair_target, ctx):
                         prompt.extend(ctx.notes)
                     
                 else:
-                    if cov_target == "branch":
+                    if ctx.cov_target == "branch":
                         prompt = [f"With the current code, we still haven't been able to pass through the specified branch.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file).",
                                 f"To generate code that passes through the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
                                 #"Please follow the response rules below and answer."
                                 ]
-                    elif cov_target == "function":
+                    elif ctx.cov_target == "function":
                         prompt = [f"With the current code, we still haven't been able to reach the target function.", #"Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute the program that will pass through the specified branch (line number {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file).",
                                 f"To generate code that reaches the {ctx.entry.target_function} function of the {ctx.entry.target_path} file, first select the \"gdb_execute\" mode from the following four modes to check which path the most recently generated testcase is passing through.",
                                 #"Please follow the response rules below and answer."
@@ -1179,7 +1138,7 @@ def repair_test_llm(repair_target, ctx):
 
         print(f"ongoing_flag is {ongoing_flag}")
         if ongoing_flag is False or ongoing_flag is None:
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if not (ctx.GDB_OPTION or ctx.WO_READ):
                     prompt.extend(["",
                                 "## Response Modes:",
@@ -1189,7 +1148,7 @@ def repair_test_llm(repair_target, ctx):
                                 "## How to Answer:",
                                 "- Please put the file path you want to know about in the \"target_files\" field of the JSON format data.",
                                 "- If the file you want to know about has many lines and cannot be viewed due to context window limitations, you can specify \"start_line\" and \"end_line\" in addition to file_path in the \"file_slices\" to see between those specific line numbers.",
-                                #f"- The shell script code you answer will be saved to the shell script file at {execute_path} and is assumed to be executed in the directory containing {execute_path}.",
+                                #f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and is assumed to be executed in the directory containing {ctx.execute_path}.",
                                 #"- If you want to know about multiple files, please include multiple commands in a single shell script code in your answer.",
                                 #f"- The shell script can contain multiple commands.",
                                 #"- For example, if your code includes cat /path/to/test.c, you will be able to know the information of /path/to/test.c as it will be sent back to you in the next request prompt.",
@@ -1213,7 +1172,7 @@ def repair_test_llm(repair_target, ctx):
                                 "## How to Answer:",
                                 #f"- This executes separately from {ctx.paths.run_test_path}. If you don't need anything other than {ctx.paths.run_test_path}, you don't have to answer.", # {ctx.paths.run_test_path} or
                                 "- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
-                                f"- The shell script code you answer will be saved to the shell script file at {execute_path} and executed in the {execute_dir} directory.",
+                                f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and executed in the {execute_dir} directory.",
                                 f"- Please design ./execute.sh to not take any arguments when executed.",
                                 f"- The shell script can contain multiple commands.",
                     ])
@@ -1249,7 +1208,7 @@ def repair_test_llm(repair_target, ctx):
                                 #"- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
                                 "- Please put the file path you want to know about in the \"target_files\" field of the JSON format data.",
                                 "- If the file you want to know about has many lines and cannot be viewed due to context window limitations, you can specify \"start_line\" and \"end_line\" in addition to file_path in the \"file_slices\" to see between those specific line numbers.",
-                                #f"- The shell script code you answer will be saved to the shell script file at {execute_path} and is assumed to be executed in the directory containing {execute_path}.",
+                                #f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and is assumed to be executed in the directory containing {ctx.execute_path}.",
                                 #"- If you want to know about multiple files, please include multiple commands in a single shell script code in your answer.",
                                 #f"- The shell script can contain multiple commands.",
                                 #"- For example, if your code includes cat /path/to/test.c, you will be able to know the information of /path/to/test.c as it will be sent back to you in the next request prompt.",
@@ -1273,7 +1232,7 @@ def repair_test_llm(repair_target, ctx):
                                 "## How to Answer:",
                                 #f"- This executes separately from {ctx.paths.run_test_path} and {ctx.paths.run_test_path}. If you don't need anything other than {ctx.paths.run_test_path} or {ctx.paths.run_test_path}, you don't have to answer.",
                                 "- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
-                                f"- The shell script code you answer will be saved to the shell script file at {execute_path} and executed in the {execute_dir} directory.",
+                                f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and executed in the {execute_dir} directory.",
                                 f"- Please design ./execute.sh to not take any arguments when executed.",
                                 f"- The shell script can contain multiple commands.",
                      ])
@@ -1287,7 +1246,7 @@ def repair_test_llm(repair_target, ctx):
                                     "- For the same error, please do not propose solution methods that have already been tried once, but suggest other solution methods.",
                                     #f"{platform_instruction}",
                                     #"- Writing to newly created files is done with 'execute_command', but in that case, please do not abbreviate the code to be written.",
-                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                                     #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing_in_mode' key.",
                                       "- If the JSON data to be included in a single mode response is likely to exceed the token limit, please answer in multiple parts.",
                                     "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing_in_mode' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key.",
@@ -1323,7 +1282,7 @@ def repair_test_llm(repair_target, ctx):
                                     "- For the same error, please do not propose solution methods that have already been tried once, but suggest other solution methods.",
                                     #f"{platform_instruction}",
                                     #"- Writing to newly created files is done with 'execute_command', but in that case, please do not abbreviate the code to be written.",
-                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                                     #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing_in_mode' key.",
                                       "- If the JSON data to be included in a single mode response is likely to exceed the token limit, please answer in multiple parts.",
                                     "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing_in_mode' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key.",
@@ -1334,22 +1293,17 @@ def repair_test_llm(repair_target, ctx):
     
             prompt.extend(["- In summary, please respond in the following JSON format:"]) 
             
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if not (ctx.GDB_OPTION or ctx.WO_READ):
                     prompt.extend([autonomous_template])
                 elif ctx.WO_READ:
                     prompt.extend([read_template])
 
                 
-                if not ctx.WO_PATH and strategy != "wo_tool":
-                    if MIN_LENGTH:
-                        path_info, path_count, min_length, max_length = get_path_info(
-                            ctx.paths.callee_main_path, entry, ctx.paths.function_branch_path
-                        )
-                    else:
-                        path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                            ctx.paths.callee_main_path, entry, ctx.paths.function_branch_path
-                        )
+                if not ctx.WO_PATH and ctx.strategy != "wo_t":
+                    path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
+                        ctx.paths.callee_main_path, entry, ctx.paths.function_branch_path
+                    )
 
                     path_info = "\n".join(path_info)
                     path_info = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/path_info.txt", path_info, 5000)
@@ -1364,19 +1318,19 @@ def repair_test_llm(repair_target, ctx):
             else:
                 prompt.extend([autonomous_template])
 
-            if repair_count != 1 and repair_target == "testcase":
-                test_code = get_lined_code(test_path, ctx.paths.work_dir)
+            if ctx.repair_count != 1 and ctx.strategy == "testcase":
+                test_code = get_lined_code(ctx.paths.run_test_path, ctx.paths.work_dir)
 
                 ref_text = []
                 for ref in ref_files: # ref_test_path
-                    ref_text.append(f" - {test_path}") #ref_text.append(f" - {ref_base_path}")
+                    ref_text.append(f" - {ctx.paths.run_test_path}") #ref_text.append(f" - {ref_base_path}")
 
-                ref_text.append(f" - {test_path}")
+                ref_text.append(f" - {ctx.paths.run_test_path}")
 
-                execute_code = get_lined_code(run_test_path, work_dir)
+                execute_code = get_lined_code(ctx.paths.run_test_path, ctx.paths.work_dir)
 
-                prompt.extend([f"## {test_path} code:", test_code]) 
-                prompt.extend([f"## Shell script for compiling and executing {test_path} (stored in the path {ctx.paths.run_test_path}):", execute_code])
+                prompt.extend([f"## {ctx.paths.run_test_path} code:", test_code]) 
+                prompt.extend([f"## Shell script for compiling and executing {ctx.paths.run_test_path} (stored in the path {ctx.paths.run_test_path}):", execute_code])
 
 
             if error is not None and error is not True:
@@ -1390,8 +1344,8 @@ def repair_test_llm(repair_target, ctx):
 
             prompt.extend(["", "## Directory Structure of the Target Program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
-            write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-            directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 6000) #10000)
+            write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+            directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #10000)
             prompt.extend([directory_structure, ""])
 
         else:
@@ -1400,27 +1354,27 @@ def repair_test_llm(repair_target, ctx):
 
             prompt.extend(["", "## Directory Structure of the Target Program:"]) 
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) # , test_id
-            write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-            directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
+            write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+            directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
 
             prompt.extend([directory_structure, ""])
         
 
-        if repair_target == "explore_path":
-            target_code = get_lined_specific_code(ctx.paths.database_dir, target_path, ctx.entry.target_line, target_end_line)
-            target_code = trim_code(target_path, target_code, 8000) #10000)
+        if ctx.strategy == "base":
+            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
+            target_code = trim_code(ctx.entry.target_path, target_code, 8000) #10000)
     
-            if cov_target == "branch":
+            if ctx.cov_target == "branch":
                 prompt.extend(["", f"## Branch to be covered (branch {ctx.entry.target_branch} on line {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file):"])
-            elif cov_target == "function":
+            elif ctx.cov_target == "function":
                 prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
 
             prompt.extend([target_code])
 
 
         prompt = adjust_prompt(prompt)
-        delete_file(execute_path)
-        create_permissioned_file(execute_path)
+        delete_file(ctx.execute_path)
+        create_permissioned_file(ctx.execute_path)
         rsp_json = ask_llm(prompt, "continue", ctx.llm_interface)
 
         ongoing_in_mode_flag = False
@@ -1451,7 +1405,7 @@ def repair_test_llm(repair_target, ctx):
                 if mode == 'read_data':
                     if 'answer' in rsp_json:
                         code = rsp_json['answer']
-                        append_file(execute_path, code)
+                        append_file(ctx.execute_path, code)
 
                     if 'target_files' in rsp_json:
                         target_list = rsp_json['target_files']
@@ -1483,7 +1437,7 @@ def repair_test_llm(repair_target, ctx):
                 if mode == 'execute_command':
                     if 'answer' in rsp_json:
                         code = rsp_json['answer']
-                        append_file(execute_path, code)
+                        append_file(ctx.execute_path, code)
 
             if ongoing_in_mode_flag is False:
                 break
@@ -1492,36 +1446,35 @@ def repair_test_llm(repair_target, ctx):
                 testcase_num = rsp_json['testcase_num']
 
             print("Keep going to receive Rust code in modifying.")
-            if repair_target == "explore_path":
-                if cov_target == "branch":
+            if ctx.strategy == "base":
+                if ctx.cov_target == "branch":
                     prompt = [f"Please continue your answer for the code that passes through the specified branch."]
-                elif cov_target == "function":
+                elif ctx.cov_target == "function":
                     prompt = [f"Please continue your answer for the code that passes through the specified function."]
 
             prompt.extend(["", "## Response rules:",
                         #"If you are encountering errors when expressing backslashes as byte literals, you need to escape backslashes in the source code and also escape them in the byte literals, so use three backslashes (double backslashes).",
                         #"If you are encountering errors when expressing backslashes as character literals, you need to escape backslashes in the source code and also escape them in the character literals, so use two backslashes.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                           "- The modified code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
                         ])
                 
-            rsp_json = ask_llm(prompt, "continue", llm_interface)
+            rsp_json = ask_llm(prompt, "continue", ctx.llm_interface)
 
         print(f"Running program for the mode: {mode}")
         if mode == 'modify_data':
             print(f"In mode: {mode}")
-            reflect_line_modification(sum_modified_list, work_dir, database_dir)
+            reflect_line_modification(sum_modified_list, ctx.paths.work_dir, ctx.paths.database_dir)
         
-        elif mode == 'delete_data':
-            print(f"In mode: {mode}")
-            reflect_line_deletion(sum_deleted_list, work_dir, database_dir)
-
+        # elif mode == 'delete_data':
+        #     print(f"In mode: {mode}")
+        #     reflect_line_deletion(sum_deleted_list, ctx.paths.work_dir, ctx.paths.database_dir)
 
         elif mode == 'read_data':
             print(f"In mode: {mode}")
-            #output = run_read_script(execute_path, 10, True, None, "both")
+            #output = run_read_script(ctx.execute_path, 10, True, None, "both")
             read_prompt = ["- The content obtained in read_data mode is as follows.", ""] 
 
             slice_set = set()
@@ -1572,27 +1525,27 @@ def repair_test_llm(repair_target, ctx):
         
         elif mode == 'execute_command':
             print(f"In mode: {mode}")
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
-                    process_type, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
+                    ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
                     initial_coverage, ctx.paths.function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 )
             
             else:
-                execute_error, execute_out, repair_count = run_script(
-                    execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
+                execute_error, execute_out, ctx.repair_count = run_script(
+                    ctx.execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
                 )
                 execute_out = run_script_pty(ctx.paths.run_test_path)
 
-        repair_count += 1
+        ctx.repair_count += 1
 
     llm_end_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "end", repair_target, llm_end_time)
+    write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
     is_full_branch_covered = False
     ans_entry = {
-        "repair_count" : repair_count,
+        "repair_count" : ctx.repair_count,
         "version_count" : version_count, 
         "is_covered" : is_covered,
         "is_full_branch_covered" : is_full_branch_covered,
@@ -1605,8 +1558,8 @@ def repair_test_llm(repair_target, ctx):
         "original_run_test_path" : original_run_test_path,
     }
 
-    if repair_target == "explore_path": # is True:  #if select_flag is True:
-        if original_run_test_path is None:
+    if ctx.strategy == "base": # is True:  #if select_flag is True:
+        if ctx.original_run_test_path is None:
             timestamp = get_timestamp()
             original_run_test_path = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
             
@@ -1618,11 +1571,11 @@ def repair_test_llm(repair_target, ctx):
 
         return ans_entry 
 
-    elif repair_target == "no_target":
+    elif ctx.strategy == "wo_t":
         return ans_entry
     
 
-def repair_test_agent(repair_target, interface):
+def repair_test_agent(ctx):
     """ask_agent version of repair_test.
 
     The agent writes run_test_path (a shell script); coverage measurement
@@ -1633,8 +1586,6 @@ def repair_test_agent(repair_target, interface):
     mode descriptions, the JSON response template, and the ongoing/output_max
     lines are dropped.
     """
-
-    process_type         = repair_target
 
     function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
     is_covered = None
@@ -1648,13 +1599,12 @@ def repair_test_agent(repair_target, interface):
     timestamp = None
     elapsed_time = None
 
-    execute_path = interface['execute_path']
-    execute_dir = os.path.dirname(os.path.normpath(execute_path))
-    create_permissioned_file(execute_path)
+    execute_dir = os.path.dirname(os.path.normpath(ctx.execute_path))
+    create_permissioned_file(ctx.execute_path)
 
-    dep_data = read_json(dep_json_path)
-    if repair_count is None:
-        repair_count = 1
+    dep_data = read_json(ctx.paths.dep_json_path)
+    if ctx.repair_count is None:
+        ctx.repair_count = 1
 
     version_count = 0
     error = None
@@ -1663,6 +1613,7 @@ def repair_test_agent(repair_target, interface):
     # --- Agent execution environment: inspect target source + author the shell
     #     script only. Building / recompiling / coverage measurement are not done
     #     by the agent; measurement is done by the orchestrator. ---
+    agent = ctx.llm_interface
     agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
@@ -1672,7 +1623,7 @@ def repair_test_agent(repair_target, interface):
         delete_file(agent.session_path)
 
     llm_start_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "start", repair_target, llm_start_time)
+    write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
 
     branch_coverage, line_coverage, function_coverage = get_coverage(
         ctx.cov_target, ctx.paths.target_dir, ctx.paths.database_dir, 
@@ -1680,10 +1631,10 @@ def repair_test_agent(repair_target, interface):
         ctx.paths.is_program_path, ctx.paths.current_cov_path
     )
 
-    if cov_target == "function":
+    if ctx.cov_target == "function":
         initial_coverage = function_coverage
         target_statement = "target function"
-    elif cov_target == "branch":
+    elif ctx.cov_target == "branch":
         initial_coverage = branch_coverage
         target_statement = "target line"
 
@@ -1693,15 +1644,15 @@ def repair_test_agent(repair_target, interface):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > fixed_version_count:
+        if version_count > ctx.fixed_version_count:
             break
 
         # measure the coverage of the run_test_path the agent wrote last iteration
-        if (repair_count != 1 and repair_target == "explore_path"):
+        if (ctx.repair_count != 1 and ctx.strategy == "base"):
             error, std_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
-                process_type, cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path,
+                ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path,
                 ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir,
-                current_coverage, function_branch_path, is_program_path, current_cov_path
+                current_coverage, function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
             )
 
             if ctx.WO_VALIDATION is True:
@@ -1717,22 +1668,22 @@ def repair_test_agent(repair_target, interface):
             if is_covered is True:
                 break
 
-        if repair_target == "no_target":
-            if repair_count > 1:
+        if ctx.strategy == "wo_t":
+            if ctx.repair_count > 1:
                 break
 
-        if repair_target == "explore_path":
-            if repair_count == 1:
+        if ctx.strategy == "base":
+            if ctx.repair_count == 1:
                 prompt = []
-                if cov_target == "branch":
+                if ctx.cov_target == "branch":
                     prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will cover the specified branch '{ctx.entry.target_branch}' on line {ctx.entry.target_line} in the {ctx.entry.target_function} function of the {ctx.entry.target_path} file.",
                                 ])
-                elif cov_target == "function":
+                elif ctx.cov_target == "function":
                     prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command that will reach the {ctx.entry.target_function} function of the {ctx.entry.target_path} file (Line {ctx.entry.target_line}).",
                                 f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                                 ])
 
-                tool_cmd = get_tool_cmd(strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 if not ctx.WO_PATH:
                     prompt.extend(["", "## Response rules:",
                         f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
@@ -1778,7 +1729,7 @@ def repair_test_agent(repair_target, interface):
                 prompt.extend(ctx.notes)
 
             else:
-                if cov_target == "branch":
+                if ctx.cov_target == "branch":
                     prompt = [f"With the current code, we have not yet been able to pass through the specified branch. ",
                             f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry.target_path} file's {ctx.entry.target_function} function's line {ctx.entry.target_line} branch {ctx.entry.target_branch}",
                             ]
@@ -1794,9 +1745,9 @@ def repair_test_agent(repair_target, interface):
                                 ])
                     prompt.extend(ctx.notes)
 
-                elif cov_target == "function":
+                elif ctx.cov_target == "function":
                     prompt = [f"With the current code, we have not yet been able to reach the target function. ",
-                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {def_start_line}).",
+                            f"Please write a shell script code to {ctx.paths.run_test_path} that will execute a program to reach the {ctx.entry.target_path} file's {ctx.entry.target_function} function (Line {ctx.entry.target_line}).",
                             f"Also, write multiple command invocations to execute as many lines as possible within the target function. For conditional branches, try to explore as many different paths as possible.",
                             ]
                     prompt.extend(["", "## Response rules:",
@@ -1823,27 +1774,21 @@ def repair_test_agent(repair_target, interface):
             std_out = None
 
         # path_info / covered_info (from the original)
-        if repair_target == "explore_path":
-            if not ctx.WO_PATH and strategy != "wo_tool":
-                if MIN_LENGTH:
-                    path_info, path_count, min_length, max_length = get_path_info(
-                        ctx.paths.callee_main_path, ctx.entry, function_branch_path
-                    )
-                else:
-                    path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
-                        ctx.paths.callee_main_path, ctx.entry, function_branch_path
-                    )
+        if ctx.strategy == "base":
+            if not ctx.WO_PATH and ctx.strategy != "wo_tool":
+                path_info, path_count, min_length, max_length, covered_info = get_path_info_wide(
+                    ctx.paths.callee_main_path, ctx.entry, function_branch_path
+                )
 
                 path_info = "\n".join(path_info)
                 path_info = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/path_info.txt", path_info, 5000)
                 prompt.extend([""])
                 prompt.extend([path_info])
 
-                if not MIN_LENGTH:
-                    covered_info = "\n".join(covered_info)
-                    covered_info = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/covered_info.txt", covered_info, 6000)
-                    prompt.extend([""])
-                    prompt.extend([covered_info])
+                covered_info = "\n".join(covered_info)
+                covered_info = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/covered_info.txt", covered_info, 6000)
+                prompt.extend([""])
+                prompt.extend([covered_info])
 
         prompt.extend(["", "## Directory Structure of the Target Program:"])
         directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
@@ -1851,13 +1796,13 @@ def repair_test_agent(repair_target, interface):
         directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000)
         prompt.extend([directory_structure, ""])
 
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
             target_code = trim_code(ctx.entry.target_path, target_code, 8000)
 
-            if cov_target == "branch":
+            if ctx.cov_target == "branch":
                 prompt.extend(["", f"## Branch to be covered (branch {ctx.entry.target_branch} on line {ctx.entry.target_line} in {ctx.entry.target_function} of {ctx.entry.target_path} file):"])
-            elif cov_target == "function":
+            elif ctx.cov_target == "function":
                 prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
 
             prompt.extend([target_code])
@@ -1865,18 +1810,18 @@ def repair_test_agent(repair_target, interface):
         prompt = adjust_prompt(prompt)
 
         # agent run (replaces ask_llm(prompt, "continue", llm_interface))
-        result = ask_agent(prompt, "continue", ctx.agent)
+        result = ask_agent(prompt, "continue", ctx.llm_interface)
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
 
-        repair_count += 1
+        ctx.repair_count += 1
 
     llm_end_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "end", repair_target, llm_end_time)
+    write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
     is_full_branch_covered = False
     ans_entry = {
-        "repair_count" : repair_count,
+        "repair_count" : ctx.repair_count,
         "version_count" : version_count,
         "is_covered" : is_covered,
         "is_full_branch_covered" : is_full_branch_covered,
@@ -1886,14 +1831,14 @@ def repair_test_agent(repair_target, interface):
         "path_count" : path_count,
         "min_length" : min_length,
         "max_length" : max_length,
-        "original_run_test_path" : original_run_test_path,
+        "original_run_test_path" : ctx.original_run_test_path,
     }
 
-    if repair_target == "explore_path":
-        if original_run_test_path is None:
+    if ctx.strategy == "base":
+        if ctx.original_run_test_path is None:
             timestamp = get_timestamp()
-            original_run_test_path = write_testcase(run_test_path, snap_dir, timestamp)
-            ans_entry['original_run_test_path'] = original_run_test_path
+            original_run_test_path = write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
+            ans_entry['original_run_test_path'] = ctx.original_run_test_path
 
         if is_covered is True:
             is_full_branch_covered = get_branch_covered(
@@ -1903,7 +1848,7 @@ def repair_test_agent(repair_target, interface):
 
         return ans_entry
 
-    elif repair_target == "no_target":
+    elif ctx.strategy == "wo_t":
         return ans_entry
 
 
@@ -1980,7 +1925,7 @@ def get_pure_target(
             continue
         item['def_file_path'] = item['file_path']
         meta_path = get_metadata(item['file_path'], meta_dir, True)
-        if strategy == "random_t" or strategy == "wo_tool" or WO_PATH is True:  # METRIC is True
+        if strategy == "random_t" or strategy == "wo_t" or WO_PATH is True:  # METRIC is True
             if (os.path.exists(meta_path)):
                 new_data[key] = item
 
@@ -2069,6 +2014,288 @@ def update_select(select_path, target_data):
 
 
 
+def gen_priority(
+    priority_path, function_path, callee_main_path
+):  
+    cov_data = read_json(function_path)
+    related_ids = get_related_data(callee_main_path)
+    callee_data = read_json(callee_main_path)
+
+    covered = set()
+    if cov_data is not None:
+        for file_path, item in cov_data['files'].items():
+            for func_item in item['functions']:
+                if func_item['called'] is True:
+                    def_start_line, def_end_line = get_start_line(target_cmd, func_item['name'], file_path, func_item['line_number'], meta_dir)
+                    key = f"{func_item['name']}@{file_path}:{def_start_line}"
+                    covered.add(key)
+
+    new_callee_data = []
+    for item in callee_data:
+        if item['function_id'] not in covered:
+            new_callee_data.append(item)
+
+    new_callee_main_path = f"{database_dir}/calle_main_new.json"
+    write_json(new_callee_main_path, new_callee_data)
+
+    # updated graph
+    metrics, G = build_graph(call_graph, new_callee_main_path)
+
+    related_ids = get_related_data(new_callee_main_path)
+
+    seen = set()
+    summary = []
+
+    if cov_data is not None:
+        for file_path, item in cov_data['files'].items():
+            for func_item in item['functions']:
+                if func_item['name'] == "main":
+                    continue
+
+                if func_item['called'] is True:
+                    continue
+
+                def_start_line, def_end_line = get_start_line(target_cmd, func_item['name'], file_path, func_item['line_number'], meta_dir)
+
+                if def_start_line is None:
+                    continue
+                key = f"{func_item['name']}@{file_path}:{def_start_line}"
+                if key not in related_ids:
+                    continue
+
+                #metric = get_node_metric(G, metrics, key)
+                metric = get_function_centrality(key, metrics)
+
+                insert = {
+                    "function_id" : key,
+                    "file_path": file_path,
+                    "name": func_item["name"],
+                    "line_number": def_start_line,
+                    "count": func_item["count"],
+                    "branch": None,
+                    "uncovered_ratio": 0, #None,
+                    "func_start_line": def_start_line,
+                    "func_end_line": def_end_line,
+                }
+
+                for key, value in metric.items():
+                    insert[key] = value
+
+                summary.append(insert)
+                seen.add(key)
+
+
+    for item in callee_data:
+        if item['end_line'] is None:
+            continue
+        key = item['function_id']
+        if key not in seen:
+            insert = {
+                    "function_id" : key,
+                    "file_path": item['file_path'],
+                    "name": item["name"],
+                    "line_number": item['start_line'],
+                    "count": 0,
+                    "branch": None,
+                    "uncovered_ratio": 0, #None,
+                    "func_start_line": item['start_line'],
+                    "func_end_line": item['end_line']
+                }
+
+            metric = get_function_centrality(key, metrics)
+            for key, value in metric.items():
+                insert[key] = value
+
+            summary.append(insert)
+
+    write_json(priority_path, summary)
+    return summary
+
+
+def get_surround(callee_main_path):
+
+    related_data = read_json(callee_main_path)
+    related_list = []
+    for item in related_data:
+        related_list.append(item['function_id'])
+
+    related_list = list(set(related_list))
+
+    return related_list
+
+
+def use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric):
+    print("Listing up target_funcs")
+
+    related_list = get_surround(callee_main_path)
+    ratios = list(ratios)
+    ratios = sorted(ratios, reverse=True)
+
+    # A way to do the two-stage sort at once
+    # Sort by uncovered_ratio in descending order, and for equal values, sort by pagerank in descending order
+    summary = sorted(summary, key=lambda x: (-x.get('uncovered_ratio', 0), -x.get(fixed_metric, 0)))
+    write_json(priority_path, summary)
+
+    for i in range(0, len(summary)-1):
+        function_id = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
+        if function_id not in related_list:
+            summary[i]['surround'] = False
+        else:
+            summary[i]['surround'] = True
+
+    write_json(priority_path, summary)
+
+
+    target_entry = {}
+    for i in range(0, len(summary)-1):
+        function_id = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
+
+        if FUNCTION_WRAP:
+            func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['line_number']}"
+        else:
+            func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
+
+        if func_key not in targeted_set:
+            target_entry['target_line'] = summary[i]['line_number']  # find_first_uncovered_line(target_entry, line_path)
+            target_entry['target_end_line'] = summary[i]['func_end_line'] 
+            target_entry['target_path'] = summary[i]['file_path']
+            target_entry['target_function'] = summary[i]['name']
+            target_entry['target_branch'] = summary[i]['branch']
+            target_entry['target_uncovered_ratio'] = summary[i]['uncovered_ratio']
+            target_entry['target_uncovered_ratio'] = summary[i][fixed_metric]
+
+            targeted_set.add(func_key)
+            break
+
+    target_entry['explore_time'] = None 
+
+    return target_entry
+
+
+def use_random_target(targeted_set, summary_data, target_dir, branch_path, callee_main_path):
+
+    related_list = get_surround(callee_main_path)
+
+    # Try the groups in order
+    #for ratio in sorted_ratios:
+    candidate_branches = summary_data #priority_groups[ratio]
+
+    # Shuffle the candidates (to ensure randomness)
+    random.shuffle(candidate_branches)
+
+    target_entry = {}
+    # Try the candidates in this group one by one
+
+    print(candidate_branches)
+    for selected_branch in candidate_branches:
+        file_path = selected_branch['file_path']
+        relative_path = remove_base_path(file_path, f"{current_path}")
+        meta_data = get_metadata(relative_path, meta_dir, False)
+
+        if meta_data is None:
+            continue
+
+        line_number = selected_branch['line_number']
+        func_name = selected_branch['name']
+        is_main = False
+
+        if func_name == "main":
+            is_main = True
+
+        if FUNCTION_WRAP:
+            func_key = f"{func_name}@{selected_branch['file_path']}:{selected_branch['line_number']}"
+        else:
+            func_key = f"{func_name}@{selected_branch['file_path']}:{selected_branch['func_start_line']}"
+
+        function_id = f"{func_name}@{selected_branch['file_path']}:{selected_branch['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
+        if SURROUND and function_id not in related_list:
+            continue
+
+        # If it is not the main function, select this branch
+        if not is_main and func_key not in targeted_set:
+            # Format the result
+            target_entry['target_path'] = selected_branch['file_path']
+            target_entry['target_function'] = func_name
+            target_entry['target_branch'] = selected_branch['branch']
+            target_entry['target_line'] = selected_branch['line_number']
+            target_entry['target_end_line'] = selected_branch['func_end_line']
+            target_entry['target_uncovered_ratio'] = selected_branch['uncovered_ratio']
+
+            targeted_set.add(func_key)
+            update_targeted_set()
+
+            # print(selected_branch)
+            # print(target_entry)
+            # print(func_name)
+
+            return target_entry
+
+    raise ValueError("Error here")
+
+
+def get_target_entry(
+    cent, targeted_set, target_dir, is_program_path, function_path, priority_path, callee_main_path
+):  
+    # Prepare priority data
+    random = get_random_void()
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    timestamp = f"{timestamp}_{random}"
+
+    # Generate coverage information including branch coverage with lcov
+    coverage_info_path = f"{database_dir}/coverage_{timestamp}.info"
+
+    if not os.path.exists(current_coverage_info_path):
+        #raise ValueError("does not exists: current_coverage_info_path")
+        try:
+            subprocess.run(
+                [
+                    "lcov", "--capture", "--directory", target_dir,
+                    "--output-file", coverage_info_path,
+                    "--rc", "lcov_branch_coverage=1"  # Enable branch coverage
+                ],
+                check=True,
+                stderr=subprocess.PIPE,
+                timeout=None #timeout=180 # 30 # Too short here
+            )
+        except subprocess.TimeoutExpired:
+            print(f"WARNING: lcov command timed out")
+            return {"error": "lcov command timed out", "total_branches": 0, "covered_branches": 0, "files": {}}
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error running lcov: {e.stderr.decode()}")
+            return {"error": f"lcov command error: {e.stderr.decode()}", "total_branches": 0, "covered_branches": 0, "files": {}}
+    else:
+        coverage_info_path = current_coverage_info_path
+
+
+    get_function_coverage(coverage_info_path, target_dir, function_path, is_program_path)
+    delete_file(coverage_info_path)
+
+    summary = gen_priority(priority_path, function_path, callee_main_path) # , G, metrics
+
+    if len(summary) == 0:
+        return {}
+
+    ratios = set()
+
+    # Target selection
+  
+    target_entry = {}
+    #1. For the same uncovered_ratio, prefer the path with fewer dependencies
+    if METRIC is True:  # if PAGERANK:
+        target_entry = use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric)
+
+    #4. random
+    elif RANDOM_TARGET:
+        target_entry = use_random_target(targeted_set, summary, target_dir, function_path, callee_main_path)
+
+    print("========== Selected Target ==========")
+    print(target_entry)
+    print("=====================================")
+    return target_entry
+
+
+
 def explore_path(
     paths, llm_interface, strategy, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, 
     original_target_dir, fixed_metric, fixed_version_count, fixed_explore_time, explore_fix,
@@ -2077,23 +2304,18 @@ def explore_path(
 ): 
     
     entry = {}
-    if strategy != "wo_tool":
+    if strategy != "wo_t":
         if current_coverage == 0 or current_coverage is None:
             target_entry = get_pure_target(
                 strategy, target_cmd, paths.target_dir, paths.meta_dir, paths.database_dir, paths.work_dir, targeted_set, 
                 paths.is_program_path, paths.callee_path, paths.callee_main_path, graph_metrics, fixed_metric, WO_PATH
             ) 
-
         else:
-            if cov_target == "function":
-                target_entry = get_target_entry(
-                    paths.target_dir, paths.is_program_path, paths.function_path, paths.priority_path, paths.callee_main_path
-                ) 
+            target_entry = get_target_entry(
+                cent, targeted_set, paths.target_dir, 
+                paths.is_program_path, paths.function_path, paths.priority_path, paths.callee_main_path
+            ) 
 
-            elif cov_target == "branch":
-                target_entry = get_target_entry_branch(
-                    paths.target_dir, paths.is_program_path, paths.branch_path, paths.priority_path
-                )
 
         print(f"\nTarget is {target_entry}")
 
@@ -2108,21 +2330,6 @@ def explore_path(
             'flow_log_path' : None,
             'explore_time' : None,
         }
-
-    entry['target_path'] = target_entry['target_path']
-    entry['target_line'] = target_entry['target_line']
-    entry['target_end_line'] = target_entry['target_end_line']
-    entry['target_function'] = target_entry['target_function']
-    entry['target_uncovered_ratio'] = target_entry['target_uncovered_ratio']
-    entry['target_branch'] = target_entry['target_branch']
-    entry['flow_log_path'] = paths.flow_log_path
-
-    target_path = target_entry['target_path']
-    target_line = target_entry['target_line'] 
-    target_end_line = target_entry['target_end_line']  
-    target_function = target_entry['target_function'] 
-    target_uncovered_ratio = target_entry['target_uncovered_ratio']
-    target_branch = target_entry['target_branch']
 
     # setup for asking llm
     cmd_list = []
@@ -2144,23 +2351,18 @@ def explore_path(
         strategy=strategy,
         tool_string=tool_string,
         fixed_version_count=fixed_version_count,
-        entry=entry,
+        entry=target_entry,
         max_num_test=max_num_test,
         fixed_metric=fixed_metric,
         repair_count=repair_count,
-        target_path=target_path,
-        target_function=target_function,
-        target_uncovered_ratio=target_uncovered_ratio,
-        target_branch=target_branch,
-        target_line=target_line,
-        target_end_line=target_end_line,
+        # target_path=target_path,
+        # target_function=target_function,
+        # target_uncovered_ratio=target_uncovered_ratio,
+        # target_branch=target_branch,
+        # target_line=target_line,
+        # target_end_line=target_end_line,
         target_cmd=target_cmd,
         cmd_list=cmd_list,
-        test_path=None,
-        file_path=None,
-        test_id=None,
-        function_name=None,
-        main_flag=None,
         explore_time=explore_time,
         cmd_exe=cmd_exe,
         notes=notes,
@@ -2173,12 +2375,13 @@ def explore_path(
         # COUNT_PERIODIC=COUNT_PERIODIC,
     )
 
-    if strategy != "wo_tool":
-        if llm_interface.AGENT is False:
-            ans_entry = repair_test_llm('explore_path', ctx)
-        else:
-            ans_entry = repair_test_agent('explore_path', ctx)
+    
+    if llm_interface.AGENT is False:
+        ans_entry = repair_test_llm(ctx)
+    else:
+        ans_entry = repair_test_agent(ctx)
 
+    if strategy != "wo_t":
         repair_count = ans_entry['repair_count']
         version_count = ans_entry['version_count']
         is_covered = ans_entry['is_covered']
@@ -2214,12 +2417,7 @@ def explore_path(
 
         update_select(paths.select_path, target_data)
         
-    elif strategy == "wo_tool":
-        if llm_interface.AGENT is False:
-            ans_entry = repair_test('no_target', ctx)
-        else:
-            ans_entry = repair_test_agent('no_target', ctx)
-
+    elif strategy == "wo_t":
         ans_entry['is_covered'] = None
 
     print(f"Current coverage: {current_coverage}")
@@ -2344,10 +2542,9 @@ def get_annotated_source_code_range(target_file_path, start_line=None, end_line=
         return f"Error: {str(e)}"
 
 
-def repair_branch_llm(repair_target, interface):
+def repair_branch_llm(ctx):
 
-    process_type = repair_target 
-    function_branch_path = f"{database_dir}/cov_candidate.json"
+    function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
 
     explore_time = None
     initial_error = None
@@ -2361,8 +2558,6 @@ def repair_branch_llm(repair_target, interface):
     min_length = None
     max_length = None
 
-    def_start_line = ctx.entry.target_line 
-
     if not (ctx.WO_READ):
         mode_statement = "Only one mode out of three" #"Only one mode from three modes" # "Only one mode out of three"
     elif ctx.WO_READ:
@@ -2370,14 +2565,14 @@ def repair_branch_llm(repair_target, interface):
 
 
     explore_count = 0
-    execute_dir = os.path.dirname(os.path.normpath(execute_path))
-    create_permissioned_file(execute_path)
+    execute_dir = os.path.dirname(os.path.normpath(ctx.execute_path))
+    create_permissioned_file(ctx.execute_path)
 
     ref_files = []
     dep_data = read_json(ctx.paths.dep_json_path)
 
-    if repair_count is None:
-        repair_count = 1 
+    if ctx.repair_count is None:
+        ctx.repair_count = 1 
 
     modified_file_list = []
     mode = None
@@ -2394,7 +2589,7 @@ def repair_branch_llm(repair_target, interface):
     timestamp = None
 
     llm_start_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "start", repair_target, llm_start_time)
+    write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
 
     branch_coverage, line_coverage, function_coverage = get_coverage(
         ctx.cov_target, ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
@@ -2411,13 +2606,13 @@ def repair_branch_llm(repair_target, interface):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > fixed_version_count:
+        if version_count > ctx.fixed_version_count:
             break
 
         if mode != "read_data":
-            if (ctx.repair_count != 1 and repair_target == "explore_path"):
+            if (ctx.repair_count != 1 and ctx.strategy == "base"):
                 error, std_out, is_covered, is_increased, diff, current_branch_coverage, branch_coverage, line_coverage, function_coverage, timestamp = run_branch_cov_script(
-                    process_type, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
+                    ctx.strategy, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
                     current_branch_coverage, function_branch_path
                 )
@@ -2432,22 +2627,22 @@ def repair_branch_llm(repair_target, interface):
                 if is_increased is True:
                     break
             
-            elif (ctx.repair_count != 1 and repair_target == "no_target"):
+            elif (ctx.repair_count != 1 and ctx.strategy == "wo_t"):
                 error, std_out, ctx.repair_count = run_script(
                     ctx.paths.run_test_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
                 )
 
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             if error is None and mode != "read_data" and ongoing_flag is False:
                 if is_covered is True: 
                     break 
 
-        elif repair_target == "no_target":
-            if repair_count > 1:
+        elif ctx.strategy == "wo_t":
+            if ctx.repair_count > 1:
                 break
             
         elif error is None and mode != "read_data" and ongoing_flag is False:
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if is_covered is True: 
                     break            
             else:
@@ -2456,26 +2651,26 @@ def repair_branch_llm(repair_target, interface):
         if ctx.WO_VALIDATION is True:
             break
 
-        if repair_target == "explore_path":
-            if repair_count == 1:
+        if ctx.strategy == "base":
+            if ctx.repair_count == 1:
                 prompt = []
                 add_prompt = []
 
                 prompt.extend([
-                    f"The following commands in {original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute diverse commands using the {target_cmd} command that would improve branch coverage within that target function.",
+                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
                     f"When answering, please follow the answering rules and choose {mode_statement} to generate your response.",
                 ]) 
                                 
-                tool_cmd = get_tool_cmd(strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt.extend(["", "## Response rules:",
                         f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                         f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
-                        f"- Even if the program implements other commands, please write test cases only for the {target_cmd} command for now.",
-                        f"- The {target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
+                        f"- Even if the program implements other commands, please write test cases only for the {ctx.target_cmd} command for now.",
+                        f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                         f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                         "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
                         #"- --run_fuzz is used for fuzzing, but now it's for executing commands, so please don't include the --run_fuzz option when executing the program in the shell code.",
-                        f"- Please do not include build execution (./{build_path}) in the shell code in {ctx.paths.run_test_path}.",
+                        f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                         #f"- If modifying {ctx.paths.run_test_path} still cannot generate test cases that pass through the specified branch, please use gdb_execute mode once to confirm which functions the current test case is passing through, and generate shell code that accurately passes through the specified line.",
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
@@ -2489,13 +2684,13 @@ def repair_branch_llm(repair_target, interface):
                         f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                         "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                         #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                         "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
                         ])
 
-                prompt.extend(notes)
+                prompt.extend(ctx.notes)
 
             else:
                 #if explore_count > 3:
@@ -2506,7 +2701,7 @@ def repair_branch_llm(repair_target, interface):
                         ]
                 prompt.extend(["", "## Response rules:", #"- Test cases refer to the inputs of the entry point function.",
                             f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
-                            f"- Even if the program implements other commands, please write test cases only for the {target_cmd} command for now.",
+                            f"- Even if the program implements other commands, please write test cases only for the {ctx.target_cmd} command for now.",
                             f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                             f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                             f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
@@ -2515,23 +2710,23 @@ def repair_branch_llm(repair_target, interface):
                             #"- --run_fuzz is used for fuzzing, but now it's for executing commands, so please don't include the --run_fuzz option when executing the program in the shell code.",
                             f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                             ])
-                prompt.extend(notes)                    
+                prompt.extend(ctx.notes)                    
         
-        elif repair_target == "no_target":
-            if repair_count == 1:
+        elif ctx.strategy == "wo_t":
+            if ctx.repair_count == 1:
                 prompt = []
                 prompt.extend([f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} using modify_data mode to execute test cases for the {pure_cmd} command in a way that maximizes code coverage.", #coverage.",
                                f"When answering, please follow the answering rules below and choose {mode_statement} to generate your response.",
                                ])
                 
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt.extend(["", "## Response rules",
                         f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                         f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
                         f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                         f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                         f"- Even if the program implements other commands, please write test cases only for the {pure_cmd} command for now.",
-                        #f"- To increase coverage more quickly, please include at least {max_num_test} calls to {target_cmd}.",
+                        #f"- To increase coverage more quickly, please include at least {max_num_test} calls to {ctx.target_cmd}.",
                         #f"- The current total number of covered functions is {current_coverage}.",
                         "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
                         #"- --run_fuzz is used for fuzzing, but now it's for executing commands, so please don't include the --run_fuzz option when executing the program in the shell code.",
@@ -2549,17 +2744,17 @@ def repair_branch_llm(repair_target, interface):
                         f"- Please do not use shell variables ($variable or ${{variable}}) in commands, since each command sequence will be extracted individually later.",
                         "- Since coverage information is being accumulated, please absolutely do not recompile the source code in the code generated in modify_data mode or in the shell code executed in execute_command mode.",
                         #"- Please do not include sudo commands that use root privileges. It is assumed that settings requiring sudo have already been made.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                           "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
                         ])      
-                prompt.extend(notes) 
+                prompt.extend(ctx.notes) 
 
             else:
                 print("Should not proceed this step")
                 prompt = []
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt = [f"Please modify the test case {ctx.paths.run_test_path} to increase coverage for the program.",
                           f"- Please set as many options as possible in a single command to explore more execution paths.",
                           f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
@@ -2604,7 +2799,7 @@ def repair_branch_llm(repair_target, interface):
         print(f"ongoing_flag is {ongoing_flag}")
 
         if ongoing_flag is False or ongoing_flag is None:
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if not (ctx.GDB_OPTION or ctx.WO_READ):
                     prompt.extend(["",
                                 "## Response Modes:",
@@ -2614,7 +2809,7 @@ def repair_branch_llm(repair_target, interface):
                                 "## How to Answer:",
                                 "- Please put the file path you want to know about in the \"target_files\" field of the JSON format data.",
                                 "- If the file you want to know about has many lines and cannot be viewed due to context window limitations, you can specify \"start_line\" and \"end_line\" in addition to file_path in the \"file_slices\" to see between those specific line numbers.",
-                                #f"- The shell script code you answer will be saved to the shell script file at {execute_path} and is assumed to be executed in the directory containing {execute_path}.",
+                                #f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and is assumed to be executed in the directory containing {ctx.execute_path}.",
                                 #"- If you want to know about multiple files, please include multiple commands in a single shell script code in your answer.",
                                 #f"- The shell script can contain multiple commands.",
                                 #"- For example, if your code includes cat /path/to/test.c, you will be able to know the information of /path/to/test.c as it will be sent back to you in the next request prompt.",
@@ -2638,7 +2833,7 @@ def repair_branch_llm(repair_target, interface):
                                 "## How to Answer:",
                                 #f"- This executes separately from {ctx.paths.run_test_path}. If you don't need anything other than {ctx.paths.run_test_path}, you don't have to answer.", # {ctx.paths.run_test_path} or
                                 "- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
-                                f"- The shell script code you answer will be saved to the shell script file at {execute_path} and executed in the {execute_dir} directory.",
+                                f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and executed in the {execute_dir} directory.",
                                 f"- Please design ./execute.sh to not take any arguments when executed.",
                                 f"- The shell script can contain multiple commands.",
                     ])
@@ -2657,7 +2852,7 @@ def repair_branch_llm(repair_target, interface):
                                 #"- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
                                 "- Please put the file path you want to know about in the \"target_files\" field of the JSON format data.",
                                 "- If the file you want to know about has many lines and cannot be viewed due to context window limitations, you can specify \"start_line\" and \"end_line\" in addition to file_path in the \"file_slices\" to see between those specific line numbers.",
-                                #f"- The shell script code you answer will be saved to the shell script file at {execute_path} and is assumed to be executed in the directory containing {execute_path}.",
+                                #f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and is assumed to be executed in the directory containing {ctx.execute_path}.",
                                 #"- If you want to know about multiple files, please include multiple commands in a single shell script code in your answer.",
                                 #f"- The shell script can contain multiple commands.",
                                 #"- For example, if your code includes cat /path/to/test.c, you will be able to know the information of /path/to/test.c as it will be sent back to you in the next request prompt.",
@@ -2681,7 +2876,7 @@ def repair_branch_llm(repair_target, interface):
                                 "## How to Answer:",
                                 #f"- This executes separately from {ctx.paths.run_test_path} and {ctx.paths.run_test_path}. If you don't need anything other than {ctx.paths.run_test_path} or {ctx.paths.run_test_path}, you don't have to answer.",
                                 "- Put the shell script code to be executed in the \"answer\" field of the JSON format data.",
-                                f"- The shell script code you answer will be saved to the shell script file at {execute_path} and executed in the {execute_dir} directory.",
+                                f"- The shell script code you answer will be saved to the shell script file at {ctx.execute_path} and executed in the {execute_dir} directory.",
                                 f"- Please design ./execute.sh to not take any arguments when executed.",
                                 f"- The shell script can contain multiple commands.",
                      ])
@@ -2695,7 +2890,7 @@ def repair_branch_llm(repair_target, interface):
                                     "- For the same error, please do not propose solution methods that have already been tried once, but suggest other solution methods.",
                                     #f"{platform_instruction}",
                                     #"- Writing to newly created files is done with 'execute_command', but in that case, please do not abbreviate the code to be written.",
-                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                                     #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing_in_mode' key.",
                                       "- If the JSON data to be included in a single mode response is likely to exceed the token limit, please answer in multiple parts.",
                                     "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing_in_mode' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key.",
@@ -2731,7 +2926,7 @@ def repair_branch_llm(repair_target, interface):
                                     "- For the same error, please do not propose solution methods that have already been tried once, but suggest other solution methods.",
                                     #f"{platform_instruction}",
                                     #"- Writing to newly created files is done with 'execute_command', but in that case, please do not abbreviate the code to be written.",
-                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                                    f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                                     #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing_in_mode' key.",
                                       "- If the JSON data to be included in a single mode response is likely to exceed the token limit, please answer in multiple parts.",
                                     "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing_in_mode' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing_in_mode' key.",
@@ -2742,14 +2937,14 @@ def repair_branch_llm(repair_target, interface):
 
                 
             prompt.extend(["- In summary, please respond in the following JSON format:"])
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 if not (ctx.GDB_OPTION or ctx.WO_READ):
                     prompt.extend([autonomous_template])
                 elif ctx.WO_READ:
                     prompt.extend([read_template])
 
                 
-                if not ctx.WO_PATH and ctx.strategy != "wo_tool":
+                if not ctx.WO_PATH and ctx.strategy != "wo_t":
                     print("Printing covered branch?")
 
             else:
@@ -2760,14 +2955,14 @@ def repair_branch_llm(repair_target, interface):
                 error = None
 
             if std_out is not None and std_out is not True:
-                std_out = trim_data(work_dir, f"{work_dir}/std_out.txt", std_out, 10000)
+                std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
                 prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"])
                 std_out = None 
 
             prompt.extend(["", "## Directory Structure of the Target Program:"])
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir) 
-            write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-            directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
+            write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+            directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
             prompt.extend([directory_structure, ""])
 
         else:
@@ -2776,13 +2971,13 @@ def repair_branch_llm(repair_target, interface):
 
             prompt.extend(["", "## Directory Structure of the Target Program:"])
             directory_structure = get_dir_struct("testcase", ctx.paths.work_dir, ctx.original_target_dir)
-            write_file(f"{database_dir}/directry_structure.txt", directory_structure)
-            directory_structure = trim_code(f"{database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
+            write_file(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure)
+            directory_structure = trim_code(f"{ctx.paths.database_dir}/directry_structure.txt", directory_structure, 6000) #, 10000)
 
             prompt.extend([directory_structure, ""])
 
-        if repair_target == "explore_path":
-            target_code = get_lined_specific_code(database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
+        if ctx.strategy == "base":
+            target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
             target_code = trim_code(ctx.entry.target_path, target_code, 8000) #10000)
 
             # covered_code = get_covered_code()
@@ -2790,8 +2985,8 @@ def repair_branch_llm(repair_target, interface):
             print("=== Annotated source code ===")
             print(annotated_code)
 
-            test_code = read_file(original_run_test_path)
-            prompt.extend(["", f"## Original test shell that reaches the target function (in {original_run_test_path}):"])
+            test_code = read_file(ctx.original_run_test_path)
+            prompt.extend(["", f"## Original test shell that reaches the target function (in {ctx.original_run_test_path}):"])
             prompt.extend([test_code])
 
 
@@ -2803,8 +2998,8 @@ def repair_branch_llm(repair_target, interface):
 
 
         prompt = adjust_prompt(prompt)
-        delete_file(execute_path)
-        create_permissioned_file(execute_path)
+        delete_file(ctx.execute_path)
+        create_permissioned_file(ctx.execute_path)
         rsp_json = ask_llm(prompt, "continue", ctx.llm_interface)
         
         ongoing_in_mode_flag = False
@@ -2812,7 +3007,6 @@ def repair_branch_llm(repair_target, interface):
         sum_target_list = []
         sum_modified_list = []
         sum_deleted_list = []
-
         sum_slice_list = []
 
         while (1):
@@ -2835,7 +3029,7 @@ def repair_branch_llm(repair_target, interface):
                 if mode == 'read_data':
                     if 'answer' in rsp_json:
                         code = rsp_json['answer']
-                        append_file(execute_path, code)
+                        append_file(ctx.execute_path, code)
 
                     if 'target_files' in rsp_json:
                         target_list = rsp_json['target_files']
@@ -2867,7 +3061,7 @@ def repair_branch_llm(repair_target, interface):
                 if mode == 'execute_command':
                     if 'answer' in rsp_json:
                         code = rsp_json['answer']
-                        append_file(execute_path, code)
+                        append_file(ctx.execute_path, code)
 
             if ongoing_in_mode_flag is False:
                 break
@@ -2877,14 +3071,14 @@ def repair_branch_llm(repair_target, interface):
 
             print("Keep going to receive Rust code in modifying.")
 
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 prompt = [f"Please continue your answer for the code that passes through the specified function."]
 
 
             prompt.extend(["", "## Response rules:",
                         #"If you are encountering errors when expressing backslashes as byte literals, you need to escape backslashes in the source code and also escape them in the byte literals, so use three backslashes (double backslashes).",
                         #"If you are encountering errors when expressing backslashes as character literals, you need to escape backslashes in the source code and also escape them in the character literals, so use two backslashes.",
-                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {output_max} tokens.", # For long answers,
+                        f"- To avoid hitting the output token limit, please keep the JSON data included in a single response within {ctx.llm_interface.output_max} tokens.", # For long answers,
                         #f"When answering in multiple parts, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key. If that JSON data is the last part, please enter the boolean value False in the 'ongoing' key.",
                           "- The modified code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections. If the JSON data to be included in a single response is likely to exceed the token limit, please answer in multiple parts.",
                         "- If that JSON data is the last one, please enter the boolean value False in the 'ongoing' key. Furthermore, if there is more JSON data remaining, please enter the boolean value True in the value of the 'ongoing' key.",
@@ -2897,9 +3091,9 @@ def repair_branch_llm(repair_target, interface):
             print(f"In mode: {mode}")
             reflect_line_modification(sum_modified_list, ctx.paths.work_dir, ctx.paths.database_dir) 
 
-        elif mode == 'delete_data':
-            print(f"In mode: {mode}")
-            reflect_line_deletion(sum_deleted_list, ctx.paths.work_dir, ctx.paths.database_dir) 
+        # elif mode == 'delete_data':
+        #     print(f"In mode: {mode}")
+        #     reflect_line_deletion(sum_deleted_list, ctx.paths.work_dir, ctx.paths.database_dir) 
 
         elif mode == 'read_data':
             print(f"In mode: {mode}")
@@ -2954,25 +3148,25 @@ def repair_branch_llm(repair_target, interface):
         
         elif mode == 'execute_command':
             print(f"In mode: {mode}")
-            if repair_target == "explore_path":
+            if ctx.strategy == "base":
                 execute_error, execute_out, is_covered, is_increased, diff, current_coverage, branch_coverage, line_coverage, function_coverage, timestamp, original_run_test_path = run_cov_script(
-                    process_type, ctx.cov_target, ctx.paths.run_test_path, entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
+                    ctx.strategy, ctx.cov_target, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, 
                     ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
                     initial_coverage, ctx.paths.function_branch_path, ctx.paths.is_program_path, ctx.paths.current_cov_path
                 ) 
             
             else:
                 execute_error, execute_out, ctx.repair_count = run_script(
-                    execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
+                    ctx.execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
                 )
                 execute_out = run_script_pty(ctx.paths.run_test_path)
             
         ctx.repair_count += 1 
 
     llm_end_time = time.time()
-    write_time(time_path, "llm", "end", repair_target, llm_end_time)
+    write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
-    if repair_target == "explore_path": # is True:  #if select_flag is True:
+    if ctx.strategy == "base": # is True:  #if select_flag is True:
         ans_entry = {
             "repair_count" : ctx.repair_count,
             "version_count" : version_count, 
@@ -2987,7 +3181,7 @@ def repair_branch_llm(repair_target, interface):
         return ans_entry #ctx.repair_count, is_covered, elapsed_time, diff
     
 
-def repair_branch_agent(repair_target, ctx):
+def repair_branch_agent(ctx):
     """ask_agent version of repair_branch.
 
     The agent writes run_test_path (a shell script) directly; branch-coverage
@@ -2998,8 +3192,6 @@ def repair_branch_agent(repair_target, ctx):
     only the mode descriptions, the JSON response template, and the
     ongoing / output_max / max_counter lines are dropped.
     """
-
-    process_type = repair_target 
     function_branch_path = f"{ctx.paths.database_dir}/cov_candidate.json"
 
     explore_time = None
@@ -3012,13 +3204,7 @@ def repair_branch_agent(repair_target, ctx):
     timestamp = None
     elapsed_time = None
 
-    test_path     = interface['test_path']
-    file_path     = interface['file_path']
-    test_id       = interface['test_id']
-    function_name = interface['function_name']
-    main_flag     = interface['main_flag']
-
-    dep_data = read_json(dep_json_path)
+    dep_data = read_json(ctx.paths.dep_json_path)
 
     if ctx.repair_count is None:
         ctx.repair_count = 1
@@ -3030,16 +3216,17 @@ def repair_branch_agent(repair_target, ctx):
     # --- Agent execution environment: author the shell script only.
     #     Measurement (run_branch_cov_script) is done by the orchestrator, so the
     #     agent gets no Bash (avoids gcda contamination before measurement). ---
+    agent = ctx.llm_interface
     agent.allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
     agent.add_dirs = list({
         os.path.dirname(os.path.normpath(ctx.paths.run_test_path)),
-        ctx.paths.target_dir, original_target_dir, ctx.paths.database_dir, ctx.paths.work_dir,
+        ctx.paths.target_dir, ctx.original_target_dir, ctx.paths.database_dir, ctx.paths.work_dir,
     })
     if agent.session_path:
         delete_file(agent.session_path)
 
     llm_start_time = time.time()
-    write_time(time_path, "llm", "start", repair_target, llm_start_time)
+    write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
 
     branch_coverage, line_coverage, function_coverage = get_coverage(
         ctx.cov_target, ctx.paths.target_dir, ctx.paths.database_dir, 
@@ -3056,21 +3243,21 @@ def repair_branch_agent(repair_target, ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > fixed_version_count:
+        if version_count > ctx.fixed_version_count:
             break
 
-        if repair_target == "no_target" and ctx.repair_count > 1:
+        if ctx.strategy == "wo_t" and ctx.repair_count > 1:
             break
 
         # ---------------- prompt construction ----------------
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             if ctx.repair_count == 1:
                 prompt = []
                 prompt.extend([
-                    f"The following commands in {original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} to execute diverse commands using the {target_cmd} command that would improve branch coverage within that target function.",
+                    f"The following commands in {ctx.original_run_test_path} are commands that reach the target {ctx.entry.target_function} function below. Please write shell script code in {ctx.paths.run_test_path} to execute diverse commands using the {ctx.target_cmd} command that would improve branch coverage within that target function.",
                 ])
 
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt.extend(["", "## Response rules:",
                     f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                     f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
@@ -3091,7 +3278,7 @@ def repair_branch_agent(repair_target, ctx):
                     "- Since coverage information is being accumulated, please absolutely do not recompile the source code.",
                     "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections.",
                     ])
-                prompt.extend(notes)
+                prompt.extend(ctx.notes)
 
             else:
                 prompt = [
@@ -3101,32 +3288,32 @@ def repair_branch_agent(repair_target, ctx):
                 prompt.extend(["", "## Response rules:",
                     f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
                     f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
-                    f"- Even if the program implements other commands, please write test cases only for the {target_cmd} command for now.",
-                    f"- The {target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
+                    f"- Even if the program implements other commands, please write test cases only for the {ctx.target_cmd} command for now.",
+                    f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                     f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                     f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                     "- Since coverage information is being accumulated, please absolutely do not recompile the source code.",
                     "- Please do not make any changes to the source code of the test target, and write shell code that changes the arguments of the execution program, etc.",
-                    f"- Please do not include build execution (./{build_path}) in the shell code in {ctx.paths.run_test_path}.",
+                    f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                     ])
-                prompt.extend(notes)
+                prompt.extend(ctx.notes)
 
-        elif repair_target == "no_target":
+        elif ctx.strategy == "wo_t":
             if ctx.repair_count == 1:
                 prompt = []
                 prompt.extend([
                     f"For the program with the following directory structure, please write shell script code in {ctx.paths.run_test_path} to execute test cases for the {pure_cmd} command in a way that maximizes code coverage.",
                 ])
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt.extend(["", "## Response rules",
                     f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                     f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
                     f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
-                    f"- The {target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
+                    f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                     f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
                     f"- Even if the program implements other commands, please write test cases only for the {pure_cmd} command for now.",
                     "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
-                    f"- Please do not include build execution (./{build_path}) in the shell code in {ctx.paths.run_test_path}.",
+                    f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                     f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                     f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                     f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
@@ -3137,10 +3324,10 @@ def repair_branch_agent(repair_target, ctx):
                     "- Since coverage information is being accumulated, please absolutely do not recompile the source code.",
                     "- The answer code will be executed by direct copy and paste, so please absolutely do not include any abbreviated sections.",
                     ])
-                prompt.extend(notes)
+                prompt.extend(ctx.notes)
             else:
                 print("Should not proceed this step")
-                tool_cmd = get_tool_cmd(ctx.strategy, tool_string)
+                tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt = [
                     f"Please modify the test case {ctx.paths.run_test_path} to increase coverage for the program.",
                     f"- Please set as many options as possible in a single command to explore more execution paths.",
@@ -3157,7 +3344,7 @@ def repair_branch_agent(repair_target, ctx):
             error = None
 
         if std_out is not None and std_out is not True:
-            std_out = trim_data(work_dir, f"{work_dir}/std_out.txt", std_out, 10000)
+            std_out = trim_data(ctx.paths.work_dir, f"{ctx.paths.work_dir}/std_out.txt", std_out, 10000)
             prompt.extend(["", f"## Execution Result of {ctx.paths.run_test_path}:", f"{std_out}"])
             std_out = None
 
@@ -3169,15 +3356,15 @@ def repair_branch_agent(repair_target, ctx):
         prompt.extend([directory_structure, ""])
 
         # --- target function + coverage annotation + original reaching test (from the original) ---
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             target_code = get_lined_specific_code(ctx.paths.database_dir, ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
             target_code = trim_code(ctx.entry.target_path, target_code, 8000)
 
             # covered_code = get_covered_code()
             annotated_code = get_annotated_source_code_range(ctx.entry.target_path, ctx.entry.target_line, ctx.entry.target_end_line)
 
-            test_code = read_file(original_run_test_path)
-            prompt.extend(["", f"## Original test shell that reaches the target function (in {original_run_test_path}):"])
+            test_code = read_file(ctx.original_run_test_path)
+            prompt.extend(["", f"## Original test shell that reaches the target function (in {ctx.original_run_test_path}):"])
             prompt.extend([test_code])
 
             prompt.extend(["", f"## Target function ({ctx.entry.target_function} of {ctx.entry.target_path} file (Line {ctx.entry.target_line})):"])
@@ -3189,20 +3376,20 @@ def repair_branch_agent(repair_target, ctx):
         prompt = adjust_prompt(prompt)
 
         # --- agent run (replaces ask_llm + the ongoing/mode receive loops) ---
-        result = ask_agent(prompt, "continue", agent)
+        result = ask_agent(prompt, "continue", ctx.llm_interface)
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
 
         # --- measure branch coverage of the run_test_path the agent just wrote ---
-        if repair_target == "explore_path":
+        if ctx.strategy == "base":
             error, std_out, is_covered, is_increased, diff, current_branch_coverage, branch_coverage, line_coverage, function_coverage, timestamp = run_branch_cov_script(
-                process_type, ctx.paths.run_test_path, entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
+                ctx.strategy, ctx.paths.run_test_path, ctx.entry, ctx.paths.branch_path, ctx.paths.line_path, ctx.paths.function_path, ctx.paths.is_program_path,
                 ctx.paths.target_dir, ctx.paths.database_dir, ctx.paths.snap_dir, ctx.paths.tmp_dir, 
                 current_branch_coverage, function_branch_path
             )
 
             version_count += 1
-            print(f"\nJudge at {entry}: {is_increased}")
+            print(f"\nJudge at {ctx.entry}: {is_increased}")
             save_coverage_report(
                 ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, 
                 current_branch_coverage, line_coverage, function_coverage, "llm"
@@ -3213,7 +3400,7 @@ def repair_branch_agent(repair_target, ctx):
             if is_increased is True:
                 break
 
-        elif repair_target == "no_target":
+        elif ctx.strategy == "wo_t":
             error, std_out, ctx.repair_count = run_script(
                 ctx.paths.run_test_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, None
             )
@@ -3221,9 +3408,9 @@ def repair_branch_agent(repair_target, ctx):
         ctx.repair_count += 1
 
     llm_end_time = time.time()
-    write_time(ctx.paths.time_path, "llm", "end", repair_target, llm_end_time)
+    write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
-    if repair_target == "explore_path":
+    if ctx.strategy == "base":
         ans_entry = {
             "repair_count" : ctx.repair_count,
             "version_count" : version_count,
@@ -3240,7 +3427,7 @@ def repair_branch_agent(repair_target, ctx):
 
 def explore_branch(
     paths, llm_interface, strategy, cov_target, target_cmd, target_entry,
-    original_target_dir, max_num_test, fixed_explore_time,
+    original_target_dir, max_num_test, fixed_explore_time, explore_fix,
     database_json, error, std_out, graph_metrics, G
 ):
     entry = {}
@@ -3248,28 +3435,11 @@ def explore_branch(
     print(f"target_entry is {target_entry}")
     print("=====================================")
 
-    entry['target_path'] = target_entry['target_path']
-    entry['target_line'] = target_entry['target_line'] 
-    entry['target_function'] = target_entry['target_function']
-    entry['target_uncovered_ratio'] = target_entry['target_uncovered_ratio']
-    entry['target_branch'] = target_entry['target_branch']
-    entry['flow_log_path'] = flow_log_path
-
-
-    target_path = target_entry['target_path']
-    target_line = target_entry['target_line'] 
-    target_end_line = target_entry['target_end_line']
-
-    target_function = target_entry['target_function'] 
-    target_uncovered_ratio = target_entry['target_uncovered_ratio']
-    target_branch = target_entry['target_branch']
-
     # setup for asking llm
-    execute_path = f"{ctx.paths.work_dir}/execute.sh"
-
     cmd_list = []
     cmd_exe = database_json[target_cmd]["cmd_exe"]
     notes = database_json[target_cmd]["notes"]
+    execute_path = f"{paths.work_dir}/execute.sh"
 
     if explore_fix == "t":
         explore_time = fixed_explore_time
@@ -3284,34 +3454,25 @@ def explore_branch(
         cov_target=cov_target,
         strategy=strategy,
         max_num_test=max_num_test,
-        entry=entry,
+        entry=target_entry,
         original_run_test_path=target_entry['original_run_test_path'],
         repair_count=repair_count,
-        target_path=target_path,
-        target_function=target_function,
-        target_uncovered_ratio=target_uncovered_ratio,
-        target_branch=target_branch,
-        target_line=target_line,
-        target_end_line=target_end_line,
         target_cmd=target_cmd,
         execute_path=execute_path,
         cmd_list=cmd_list,
-        test_path=None,
-        file_path=None,
-        test_id=None,
-        function_name=None,
-        main_flag=None,
         explore_time=explore_time,
         cmd_exe=cmd_exe,
         notes=notes,
     )
 
-    if strategy != "wo_tool":
-        if llm_interface.AGENT is False:
-            ans_entry = repair_branch_llm('explore_path', ctx)
-        else:
-            ans_entry = repair_branch_agent('explore_path', ctx)
 
+    if llm_interface.AGENT is False:
+        ans_entry = repair_branch_llm(ctx)
+    else:
+        ans_entry = repair_branch_agent(ctx)
+
+
+    if strategy != "wo_t":
         repair_count = ans_entry['repair_count']
         version_count = ans_entry['version_count']
         is_covered = ans_entry['is_covered']
@@ -3347,12 +3508,6 @@ def explore_branch(
 
         update_select(select_path, target_data)
     
-    elif strategy == "wo_tool":
-        if llm_interface.AGENT is False:
-            ans_entry = repair_branch_llm('no_target', ctx)
-        else:
-            ans_entry = repair_branch_agent('no_target', ctx)
-
     # print(f"Current coverage: {current_coverage}")
     # return current_coverage 
 

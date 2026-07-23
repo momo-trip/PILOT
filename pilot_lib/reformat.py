@@ -17,6 +17,7 @@ from utils_api import (
 
 from llm_api import (
     ask_llm,
+    # ask_agent,
 )
 
 from pilot_lib.utils import (
@@ -393,10 +394,21 @@ def change_command_string_llm(
  
 
 
+def change_command_string_agent(
+    llm_interface, base_argv_path, raw_path, target_cmd, change_type, database_dir
+):
+    raise NotImplementedError(
+        "Command-string rewriting is a batch preprocessing step and runs on the "
+        "LLM path only. Agent mode is used for the exploration loop, not here."
+    )
+
+
 def change_command_string(
     change_type, llm_interface, 
     base_argv_path, raw_path, target_cmd, database_dir
 ):
+    
+    """
     if llm_interface.AGENT is False:
         change_command_string_llm(
             llm_interface, base_argv_path, raw_path, target_cmd, change_type, database_dir
@@ -405,6 +417,11 @@ def change_command_string(
         change_command_string_agent(
             llm_interface, base_argv_path, raw_path, target_cmd, change_type, database_dir
         )
+    """
+    change_command_string_llm(
+            llm_interface, base_argv_path, raw_path, target_cmd, change_type, database_dir
+        )
+
 
 
 def remove_blank_lines(file_path):
@@ -562,11 +579,6 @@ def prepare_input_files(
     target_dir, database_json, directory_id
 ):
     print("Function in car prepare_input_files()")    
-    # print(seed_dir)
-    # seed_dir = f"seed_tmp/{target_cmd}"
-    # if os.path.exists(seed_dir):
-    #     delete_directory(seed_dir)
-    # create_directory(seed_dir)
 
     cmd = database_json[target_cmd]["cmd_exe"] 
     pure_cmd = get_pure_cmd(target_cmd)
@@ -745,15 +757,14 @@ def generate_zigzag_argv(
     base_argv_path, zigzag_argv_path,
     target_cmd
 ):
-    
     if not os.path.exists(base_argv_path):
         raise ValueError(f"Should prepare {base_argv_path}")
     # insert_line_count(base_argv_path)
 
-    options = count_options(base_argv_path)
+    count, options = count_options(base_argv_path)
 
     os.makedirs(os.path.dirname(zigzag_argv_path), exist_ok=True)
-    with open(zigzag_argv_path, 'a') as f:
+    with open(zigzag_argv_path, 'w') as f:
         for item in options:
             f.write(f"{item}\n")
             

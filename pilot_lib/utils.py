@@ -4,6 +4,8 @@ import random
 import subprocess
 
 from dataclasses import dataclass
+from dataclasses import fields
+
 from datetime import datetime
 from typing import Any, Dict
 
@@ -14,16 +16,416 @@ from utils_api import (
     delete_file,
     create_file,
     get_timestamp,
+    parse_def_loc,
 )
 
 
-TARGET = "function"
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+from dataclasses import dataclass
+
+
+from dataclasses import dataclass
+from typing import Optional, Any
+
+
+@dataclass
+class ExplorerConfig:
+    """Merged configuration for one explorer run.
+
+    Combines values from the user/sys JSON config files, CLI arguments,
+    and run-time constants into a single typed object.
+    """
+    # --- from merged config file (llm / os) ---
+    llm_choice: str
+    api_key: str
+    os_vendor: str
+    os_version: str
+
+    # --- identity / paths ---
+    user_id: str
+    database_path: str
+    macro_parser_dir: str
+
+    # --- run settings ---
+    max_target_func: int
+    max_iterations: int
+    total_time: int
+    interval: int
+    fixed_explore_time: int
+    fixed_version_count: int
+    cov_target: str
+    explore_time: int
+    explore_fix: str
+    temperature: float
+    max_num_test: int
+    timeout: int
+    output_max: int
+    testfile_counter: int
+    context_window: int
+    llm_model: str
+    AGENT: bool
+    COUNT_PERIODIC: bool
+
+    # --- optional / defaulted ---
+    WEIGHT: Optional[Any] = None
+    MIN_LENGTH: Optional[Any] = None
+    GDB_OPTION: Optional[Any] = None
+    azure_endpoint: Optional[str] = None
+    strategy: Optional[str] = None
+    cent: Optional[str] = None
+
+
+
+@dataclass(frozen=True)
+class Paths:
+    """All derived paths for one run.
+
+    Everything hangs off a small set of base directories, so those are the
+    only inputs. Each path is a read-only property, keeping the derivation
+    visible and preventing accidental reassignment mid-run.
+    """
+    target_cmd: str
+    process_type: str
+    home_dir: str
+    macro_parser_dir: str
+    target: str
+    directory_id: str
+
+    # --- base directories ---
+    @property
+    def work_dir(self) -> str:
+        return f"workspace_{self.target_cmd}"
+
+    @property
+    def meta_dir(self) -> str:
+        return f"metadata_{self.target_cmd}"
+
+    @property
+    def div_meta_dir(self) -> str:
+        return f"div_metadata_{self.target_cmd}"
+
+    @property
+    def database_dir(self) -> str:
+        return f"database/{self.target_cmd}"
+
+    @property
+    def preset_dir(self) -> str:
+        return f"preset/{self.target_cmd}"
+
+    @property
+    def persistent_dir(self) -> str:
+        return f"persistent/{self.target_cmd}"
+
+    @property
+    def chat_dir(self) -> str:
+        return f"chats_{self.process_type}/{self.target_cmd}"
+
+    @property
+    def snap_dir(self) -> str:
+        return f"snapdata/{self.target_cmd}"
+
+    @property
+    def tmp_dir(self) -> str:
+        return f"tmp/{self.target_cmd}"
+
+    @property
+    def archive_dir(self) -> str:
+        return f"archive/{self.target_cmd}"
+
+    @property
+    def tool_dir(self) -> str:
+        return f"tools/{self.target_cmd}"
+
+    @property
+    def log_dir(self) -> str:
+        return f"log/{self.target_cmd}"
+
+    @property
+    def seed_dir(self) -> str:
+        return "seeds"
+
+    @property
+    def transit_dir(self) -> str:
+        return f"{self.home_dir}/transit"
+
+    @property
+    def program_dir(self) -> str:
+        return f"{self.home_dir}/program"
+        
+    @property
+    def target_dir(self) -> str:
+        return f"{self.work_dir}/{self.target}"
+
+    # --- persistent_dir derived ---
+    @property
+    def logging_path(self) -> str:
+        return f"{self.persistent_dir}/log_manager.json"
+
+    # --- database_dir derived ---
+    @property
+    def history_path(self) -> str:
+        return f"{self.database_dir}/chat_history.json"
+
+    @property
+    def dep_json_path(self) -> str:
+        return f"{self.database_dir}/dependencies.json"
+
+    @property
+    def callee_path(self) -> str:
+        return f"{self.database_dir}/callee.json"
+
+    @property
+    def callee_main_path(self) -> str:
+        return f"{self.database_dir}/callee_main.json"
+
+    @property
+    def isolated_path(self) -> str:
+        return f"{self.database_dir}/isolated.json"
+
+    @property
+    def reformed_path(self) -> str:
+        return f"{self.database_dir}/reformed.json"
+
+    @property
+    def result_path(self) -> str:
+        return f"{self.database_dir}/result.json"
+
+    @property
+    def branch_path(self) -> str:
+        return f"{self.database_dir}/cov_branch.json"
+
+    @property
+    def line_path(self) -> str:
+        return f"{self.database_dir}/cov_line.json"
+
+    @property
+    def function_path(self) -> str:
+        return f"{self.database_dir}/cov_function.json"
+
+    @property
+    def priority_path(self) -> str:
+        return f"{self.database_dir}/cov_priority.json"
+
+    @property
+    def select_path(self) -> str:
+        return f"{self.database_dir}/cov_select.json"
+
+    @property
+    def cov_report_path(self) -> str:
+        return f"{self.database_dir}/cov_report.json"
+
+    @property
+    def distance_path(self) -> str:
+        return f"{self.database_dir}/distance.json"
+
+    @property
+    def token_path(self) -> str:
+        return f"{self.database_dir}/token_{self.process_type}.json"
+
+    @property
+    def count_path(self) -> str:
+        return f"{self.database_dir}/count_{self.process_type}.json"
+
+    @property
+    def time_path(self) -> str:
+        return f"{self.database_dir}/cov_time.csv"
+
+    @property
+    def flow_log_path(self) -> str:
+        return f"{self.database_dir}/flow_all.log"
+
+    @property
+    def tmp_branch_path(self) -> str:
+        return f"{self.database_dir}/cov_branch_tmp.json"
+
+    @property
+    def tmp_line_path(self) -> str:
+        return f"{self.database_dir}/cov_line_tmp.json"
+
+    @property
+    def tmp_function_path(self) -> str:
+        return f"{self.database_dir}/cov_function_tmp.json"
+
+    @property
+    def taken_directive_path(self) -> str:
+        return f"{self.database_dir}/taken_directive.json"
+
+    @property
+    def unordered_taken_directive_path(self) -> str:
+        return f"{self.database_dir}/unordered_taken_directive.json"
+
+    @property
+    def all_directive_path(self) -> str:
+        return f"{self.database_dir}/all_directive.json"
+
+    @property
+    def is_program_path(self) -> str:
+        return f"{self.database_dir}/is_program.json"
+
+    @property
+    def all_macros_path(self) -> str:
+        return f"{self.database_dir}/all_macros.json"
+
+    @property
+    def taken_macros_path(self) -> str:
+        return f"{self.database_dir}/taken_macros.json"
+
+    @property
+    def guards_path(self) -> str:
+        return f"{self.database_dir}/guards.json"
+
+    @property
+    def guarded_macros_path(self) -> str:
+        return f"{self.database_dir}/guarded_macros.json"
+
+    @property
+    def independent_path(self) -> str:
+        return f"{self.database_dir}/independent.json"
+
+    @property
+    def flag_path(self) -> str:
+        return f"{self.database_dir}/flag.json"
+
+    @property
+    def const_path(self) -> str:
+        return f"{self.database_dir}/const.json"
+
+    @property
+    def global_path(self) -> str:
+        return f"{self.database_dir}/globals.json"
+
+    @property
+    def current_cov_path(self) -> str:
+        return f"{self.database_dir}/current_cov_info.info"
+
+    # --- tool_dir derived ---
+    @property
+    def tool_json_path(self) -> str:
+        return f"{self.tool_dir}/tools.json"
+
+    # --- target_dir derived ---
+    @property
+    def run_all_path(self) -> str:
+        return f"{self.target_dir}/run_all.sh"
+
+    @property
+    def run_test_path(self) -> str:
+        return f"{self.target_dir}/run_test.sh"
+
+    @property
+    def build_path(self) -> str:
+        return f"{self.target_dir}/c_build.sh"
+    
+    @property
+    def seed_dir(self) -> str:
+        return f"{self.home_dir}/seeds"
+
+    @property
+    def shell_dir(self) -> str:
+        return f"{self.seed_dir}/shell"
+
+    @property
+    def target_shell_dir(self) -> str:
+        return f"{self.shell_dir}/{self.target_cmd}_{self.directory_id}"
+
+    @property
+    def base_argv_path(self) -> str:
+        return f"{self.transit_dir}/{self.target_cmd}_{self.directory_id}.txt"
+    
+    @property
+    def session_path(self) -> str:
+        return f"{self.database_dir}/session_id.txt"
+
+    @property
+    def cost_path(self) -> str:
+        return f"{self.database_dir}/cost_total.txt"
+
+
+    # if process_type in ["exp", "set", "file", "carpet", "zigzag", "afl_argv"]: #"preset", "gcno", "exp", "set", "file", "carpet", "zigzag", "afl_argv"]:
+    #     seed_dir = f"{home_dir}/seeds"
+    #     shell_dir = f"{seed_dir}/shell"
+
+    #     target_shell_dir = f"{shell_dir}/{target_cmd}_{directory_id}"
+    #     base_argv_path = f'{transit_dir}/{target_cmd}_{directory_id}.txt'
+    
+    # @property
+    # def database_path(self) -> str:
+    #     return "database.json"
+
+    @property
+    def occupy_path(self) -> str:
+        return "instances.json"
+
+    @property
+    def strategy_path(self) -> str:
+        return "strategy.json"
+
+    @property
+    def macro_finder(self) -> str:
+        return f"{self.macro_parser_dir}/macro_finder/build/macro-finder"
+
+
+def merge_config(user_config: dict, sys_config: dict) -> ExplorerConfig:
+    merged = {**sys_config, **user_config}
+    valid = {f.name for f in fields(ExplorerConfig)}
+    return ExplorerConfig(**{k: v for k, v in merged.items() if k in valid})
+
+
+@dataclass
+class RepairContext:
+    # --- core objects ---
+    paths: Paths
+    llm_interface: Any
+    entry: dict
+
+    # --- run settings ---
+    cov_target: str
+    strategy: str
+    tool_string: str
+    target_cmd: str
+    cmd_exe: str
+    notes: list
+    cmd_list: list
+    max_num_test: int
+    fixed_version_count: int
+    fixed_metric: Optional[str]
+    explore_time: Optional[int]
+    repair_count: int = 1
+    testfile_counter: int = 0
+    select: bool = False
+
+    # --- target info ---
+    target_path: Optional[str] = None
+    target_function: Optional[str] = None
+    target_uncovered_ratio: Optional[float] = None
+    target_branch: Optional[int] = None
+    target_line: Optional[int] = None
+    target_end_line: Optional[int] = None
+
+    # --- testcase info (currently unused, default None) ---
+    test_path: Optional[str] = None
+    file_path: Optional[str] = None
+    test_id: Optional[str] = None
+    function_name: Optional[str] = None
+    main_flag: Optional[bool] = None
+
+    # --- strategy flags ---
+    WO_READ: bool = False
+    WO_PATH: bool = False
+    WO_VALIDATION: bool = False
+    MIN_LENGTH: bool = False
+    GDB_OPTION: bool = False
+
+
 
 @dataclass
 class LineCoverage:
     line_number: int
     is_covered: bool
     execution_count: int
+
 
 class CoverageData:
     def __init__(self, file_path: str):
@@ -332,10 +734,10 @@ def save_branch_coverage_data(branch_data, branch_path):
         json.dump(branch_data, f, indent=4)
     
     # Display the results
-    print(f"Branch Coverage: {branch_data['coverage_percent']}%")
-    print(f"Total Branches: {branch_data['total_branches']}")
-    print(f"Covered Branches: {branch_data['covered_branches']}")
-    #print(f"Uncovered Branches: {len(branch_data['uncovered_branches'])}")
+    # print(f"Branch Coverage: {branch_data['coverage_percent']}%")
+    # print(f"Total Branches: {branch_data['total_branches']}")
+    # print(f"Covered Branches: {branch_data['covered_branches']}")
+    # print(f"Uncovered Branches: {len(branch_data['uncovered_branches'])}")
 
     return branch_data['coverage_percent'] / 100
 
@@ -642,8 +1044,7 @@ def save_line_coverage_data(coverage_data, output_file, is_program_path): #cover
     
     program_files = set(read_json(is_program_path))
     for file_path, coverage in coverage_data.items():
-        print(f"\nFile: {file_path}")
-        
+        #print(f"\nFile: {file_path}")
         file_total_lines = 0
         file_covered_lines = 0
         
@@ -685,7 +1086,10 @@ def save_line_coverage_data(coverage_data, output_file, is_program_path): #cover
     return total_covered_lines, average_coverage  #average_coverage / 100
 
 
-def get_coverage(target_dir, database_dir, branch_path, line_path, function_path, is_program_path, current_cov_path):
+def get_coverage(
+    cov_target, target_dir, database_dir, branch_path, line_path, function_path, 
+    is_program_path, current_cov_path
+):
     
     delete_file(line_path)
     delete_file(branch_path)
@@ -733,23 +1137,23 @@ def get_coverage(target_dir, database_dir, branch_path, line_path, function_path
     delete_file(coverage_info_path)
 
     global current_coverage
-    if TARGET == "function":
+    if cov_target == "function":
         current_coverage = coverage_percent #function_coverage
-    elif TARGET == "branch":
+    elif cov_target == "branch":
         current_coverage = branch_coverage
 
     print("++++++++++++++++++++")
-    print(f'{branch_coverage} ({branch_percent} %)')
-    print(f'{line_coverage} ({line_percent:.2f} %)')
-    print(f'{function_coverage} ({coverage_percent} %)')
-    print("++++++++++++++++++++")
+    print(f'Branch: {branch_coverage} ({branch_percent} %)')
+    print(f'Line: {line_coverage} ({line_percent:.2f} %)')
+    print(f'Func: {function_coverage} ({coverage_percent} %)')
+    print(f"++++++++++++++++++++\n")
 
     return branch_coverage, line_coverage, function_coverage
 
 
 def get_is_covered(target_entry, cov_path, target_dir, cov_type): 
 
-    print(f"\nTarget entry: {target_entry}")
+    # print(f"\nTarget entry: {target_entry}")
     file_path = target_entry['target_path']
     target_function = target_entry['target_function']
     target_line = target_entry['target_line']
@@ -820,7 +1224,7 @@ def get_is_covered(target_entry, cov_path, target_dir, cov_type):
             return None
         
     elif cov_type == "line":
-        print(f"\nTarget entry: {target_entry}")
+
         file_path = target_entry['target_path']
         target_line = target_entry['target_line']
 
@@ -871,12 +1275,12 @@ def get_is_increased(database_dir, target_entry, previous_coverage, current_cove
     is_increased = False
     print()
     if previous_coverage is None or current_coverage is None: 
-        print(f"previous_coverage: {previous_coverage}")
-        print(f"current_coverage: {current_coverage}")
+        print(f"Previous coverage: {previous_coverage}")
+        print(f"Current coverage: {current_coverage}")
         raise ValueError("Error in get_is_increased()")
 
-    print(f"previous_coverage: {previous_coverage}")
-    print(f"current_coverage: {current_coverage}")
+    print(f"Previous coverage: {previous_coverage}")
+    print(f"Current coverage: {current_coverage}")
 
     is_increased = None
     diff = None
@@ -910,37 +1314,39 @@ def get_is_increased(database_dir, target_entry, previous_coverage, current_cove
 
 
 def run_cov_script(
-    process_type, run_test_path, entry, branch_path, line_path, function_path, 
+    process_type, cov_target, run_test_path, entry, branch_path, line_path, function_path, 
     target_dir, database_dir, snap_dir, tmp_dir, 
     initial_coverage, function_branch_path, is_program_path, current_cov_path): # option # timeout, dir_move_flag, option, 
-    print("run_cov_script...")
+    print("Executing run_cov_script...")
 
     # setup cov file
-    if TARGET == "function":
+    if cov_target == "function":
         cov_type_path = function_path
-    if TARGET == "branch":
+    if cov_target == "branch":
         cov_type_path = branch_path
-    if TARGET == "line":
+    if cov_target == "line":
         cov_type_path = line_path
 
     delete_file(cov_type_path)
 
     error, std_out = run_script(process_type, database_dir, run_test_path, 30, True, None, "both")  # , 10000
 
-    branch_coverage, line_coverage, function_coverage = get_coverage(target_dir, database_dir, branch_path, line_path, function_path, is_program_path, current_cov_path)
+    branch_coverage, line_coverage, function_coverage = get_coverage(
+        cov_target, target_dir, database_dir, branch_path, line_path, function_path, 
+        is_program_path, current_cov_path
+    )
 
-    if TARGET == "function":
+    if cov_target == "function":
         current_coverage = function_coverage
 
-    elif TARGET == "branch":
+    elif cov_target == "branch":
         current_coverage = branch_coverage
 
     is_covered = None
-    is_covered = get_is_covered(entry, cov_type_path, target_dir, TARGET)
+    is_covered = get_is_covered(entry, cov_type_path, target_dir, cov_target)
     
-    if is_covered is None:
-        print("cov_type_path")
-        print(cov_type_path)
+    # if is_covered is None:
+    #     print(f"cov_type_path: {cov_type_path}")
 
     is_increased, diff = get_is_increased(database_dir, entry, initial_coverage, current_coverage, "function")
 
@@ -1021,10 +1427,10 @@ def run_branch_cov_script(
     branch_coverage, branch_percent = get_branch_coverage(coverage_info_path, target_dir, branch_path, is_program_path)
 
     print("++++++++++++++++++++")
-    print(f'{branch_coverage} ({branch_percent} %)')
+    print(f'Branch: {branch_coverage} ({branch_percent} %)')
     #print(f'{line_coverage} ({line_percent:.2f} %)')
     #print(f'{function_coverage} ({coverage_percent} %)')
-    print("++++++++++++++++++++")
+    print(f"++++++++++++++++++++\n")
 
     current_coverage = branch_coverage
     is_covered = None
@@ -1110,7 +1516,18 @@ def parse_function_id(caller): #def get_info(caller):
 
 def get_metrics(item, graph_metrics):
 
-    target_function_id = f"{item['name']}@{item['def_file_path']}:{item['def_start_line']}"
+    if 'definition' in item:
+        file_path, start_line, _ = parse_def_loc(item['definition'])
+        
+    elif 'def_file_path' in item:
+        file_path = item['def_file_path']
+        start_line = item['def_start_line']
+
+    elif 'file_path' in item:
+        file_path = item['file_path']
+        start_line = item['start_line']
+
+    target_function_id = f"{item['name']}@{file_path}:{start_line}"
     
     # """Function to get the centrality metrics of a specific function"""
     result = {
@@ -1127,3 +1544,125 @@ def get_metrics(item, graph_metrics):
     
     return result
 
+
+def get_pure_cmd(target_cmd):
+    pure_cmd = target_cmd
+    if "_old" in pure_cmd:
+        pure_cmd = pure_cmd.replace("_old", "")
+    
+    return pure_cmd
+
+
+def get_function_centrality(target_function_id, graph_metrics):
+
+    """Function to retrieve the centrality metrics of a specific function"""
+    result = {
+        "in_degree": graph_metrics["in_degree"].get(target_function_id, 0),
+        "out_degree": graph_metrics["out_degree"].get(target_function_id, 0),
+        "degree_centrality": graph_metrics["degree_centrality"].get(target_function_id, 0),
+        "betweenness_centrality": graph_metrics["betweenness_centrality"].get(target_function_id, 0),
+        "pagerank": graph_metrics["pagerank"].get(target_function_id, 0),
+        "eigenvector_centrality": graph_metrics["eigenvector_centrality"].get(target_function_id, 0),
+        "closeness_centrality": graph_metrics["closeness_centrality"].get(target_function_id, 0),
+        "katz_centrality": graph_metrics["katz_centrality"].get(target_function_id, 0),
+        "combined_score": graph_metrics["combined_score"].get(target_function_id, 0)
+    }
+
+    return result  
+
+
+def get_branch_covered(target_file, target_function, start_line, end_line):
+    is_full_branch_covered = False
+
+    try:
+        target_file_path = target_file
+
+        if not os.path.exists(target_file_path):
+            return False #, f"Error: file not found: {target_file_path}"
+
+        # Run lcov to generate the .info file
+        target_dir = os.path.dirname(target_file_path)
+
+        cmd = ['lcov', '--capture', '--directory', target_dir, '--output-file', '-']
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=None #60
+        )
+
+        if result.returncode != 0:
+            return False #, f"lcov error: {result.stderr}"
+
+        # Parse the .info file
+        lines = result.stdout.split('\n')
+        line_data = {}
+        branch_data = {}
+        function_data = {}
+        current_file = None
+
+        for line in lines:
+            line = line.strip()
+
+            # File information
+            if line.startswith('SF:'):
+                current_file = line[3:]
+
+            elif current_file == target_file_path:
+                # Line coverage: DA:line_number,execution_count
+                if line.startswith('DA:'):
+                    parts = line[3:].split(',')
+                    line_num = int(parts[0])
+                    count = int(parts[1])
+                    line_data[line_num] = count
+
+                # Function coverage: FN:line_number,function_name
+                elif line.startswith('FN:'):
+                    parts = line[3:].split(',', 1)
+                    line_num = int(parts[0])
+                    func_name = parts[1]
+                    function_data[line_num] = func_name
+
+                # Branch coverage: BRDA:line_number,block,branch,execution_count
+                elif line.startswith('BRDA:'):
+                    parts = line[5:].split(',')
+                    line_num = int(parts[0])
+                    count = 0 if parts[3] == '-' else int(parts[3])
+                    if line_num not in branch_data:
+                        branch_data[line_num] = []
+                    branch_data[line_num].append(count)
+
+        # start_line and end_line are the function's start and end lines
+        if start_line is None or end_line is None:
+            return False #, "Function start and end lines are not specified"
+
+        function_start_line = start_line
+        function_end_line = end_line
+
+        # Check the branches within the specified function
+        uncovered_branches = []
+        total_branches = 0
+
+        for line_num, branches in branch_data.items():
+            # Check whether it is within the function's range
+            if function_start_line <= line_num <= function_end_line:
+                for i, branch_count in enumerate(branches):
+                    total_branches += 1
+                    if branch_count == 0:
+                        uncovered_branches.append((line_num, i))
+
+        # Check whether all branches are covered
+        is_full_branch_covered = len(uncovered_branches) == 0 and total_branches > 0
+
+        # In case debug information is also returned
+        debug_info = {
+            'total_branches': total_branches,
+            'uncovered_branches': uncovered_branches,
+            'function_range': (function_start_line, function_end_line)
+        }
+
+        return is_full_branch_covered #, debug_info
+
+    except Exception as e:
+        return False 
