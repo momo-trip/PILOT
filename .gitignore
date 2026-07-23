@@ -20,6 +20,7 @@ trash.py
 
 database*/
 logs*/
+log*/
 seed*/
 *workspace*/
 *metadata*/
