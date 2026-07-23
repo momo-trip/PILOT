@@ -666,8 +666,6 @@ def ask_basic_command(
         WO_READ=None,
         WO_PATH=None,
         WO_VALIDATION=WO_VALIDATION,
-        MIN_LENGTH=None,
-        GDB_OPTION=None,
     )
 
     if llm_interface.AGENT is False:
@@ -1057,7 +1055,7 @@ def repair_test_llm(ctx):
                 prompt.extend(ctx.notes)
                 
             else:
-                if not (ctx.GDB_OPTION and explore_count > 3):
+                if not (explore_count > 3):
                     if ctx.cov_target == "branch":
                         prompt = [f"With the current code, we have not yet been able to pass through the specified branch. ",
                                 f"Please write a shell script code in modify_data mode to {ctx.paths.run_test_path} that will execute a program to pass through the specified branch {ctx.entry["target_path"]} file's {ctx.entry["target_function"]} function's line {ctx.entry["target_line"]} branch {ctx.entry["target_branch"]}",
@@ -1142,7 +1140,7 @@ def repair_test_llm(ctx):
         print(f"ongoing_flag is {ongoing_flag}")
         if ongoing_flag is False or ongoing_flag is None:
             if ctx.strategy == "base":
-                if not (ctx.GDB_OPTION or ctx.WO_READ):
+                if not (ctx.WO_READ):
                     prompt.extend(["",
                                 "## Response Modes:",
                                 "1. In 'read_data' mode:",
@@ -1297,7 +1295,7 @@ def repair_test_llm(ctx):
             prompt.extend(["- In summary, please respond in the following JSON format:"]) 
             
             if ctx.strategy == "base":
-                if not (ctx.GDB_OPTION or ctx.WO_READ):
+                if not (ctx.WO_READ):
                     prompt.extend([autonomous_template])
                 elif ctx.WO_READ:
                     prompt.extend([read_template])
@@ -2304,7 +2302,7 @@ def explore_path(
     paths, llm_interface, strategy, cent, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, 
     original_target_dir, fixed_metric, fixed_version_count, fixed_explore_time, explore_fix,
     database_json, error, std_out, graph_metrics, G,
-    WO_READ, WO_PATH, WO_VALIDATION, MIN_LENGTH, GDB_OPTION, testfile_counter
+    WO_READ, WO_PATH, WO_VALIDATION, testfile_counter
 ): 
     
     entry = {}
@@ -2374,8 +2372,6 @@ def explore_path(
         WO_READ=WO_READ,
         WO_PATH=WO_PATH,
         WO_VALIDATION=WO_VALIDATION,
-        MIN_LENGTH=MIN_LENGTH,
-        GDB_OPTION=GDB_OPTION,
         # COUNT_PERIODIC=COUNT_PERIODIC,
     )
 
@@ -2805,7 +2801,7 @@ def repair_branch_llm(ctx):
 
         if ongoing_flag is False or ongoing_flag is None:
             if ctx.strategy == "base":
-                if not (ctx.GDB_OPTION or ctx.WO_READ):
+                if not (ctx.WO_READ):
                     prompt.extend(["",
                                 "## Response Modes:",
                                 "1. In 'read_data' mode:",
@@ -2943,7 +2939,7 @@ def repair_branch_llm(ctx):
                 
             prompt.extend(["- In summary, please respond in the following JSON format:"])
             if ctx.strategy == "base":
-                if not (ctx.GDB_OPTION or ctx.WO_READ):
+                if not (ctx.WO_READ):
                     prompt.extend([autonomous_template])
                 elif ctx.WO_READ:
                     prompt.extend([read_template])
@@ -3436,7 +3432,7 @@ def explore_branch(
     paths, llm_interface, strategy, cov_target, target_cmd, target_entry, tool_string, fixed_metric,
     original_target_dir, max_num_test, 
     fixed_explore_time, explore_fix, max_iterations, fixed_version_count, testfile_counter,
-    WO_READ, WO_PATH, WO_VALIDATION, MIN_LENGTH, GDB_OPTION,
+    WO_READ, WO_PATH, WO_VALIDATION,
     database_json, error, std_out, graph_metrics, G
 ):
     entry = {}
@@ -3480,8 +3476,6 @@ def explore_branch(
         WO_READ=WO_READ,
         WO_PATH=WO_PATH,
         WO_VALIDATION=WO_VALIDATION,
-        MIN_LENGTH=MIN_LENGTH,
-        GDB_OPTION=GDB_OPTION,
     )
 
 

@@ -53,6 +53,7 @@ from pilot_lib.graph import (
     get_related_main,
     build_graph,
     write_metrics,
+    get_estimated_cent,
 )
 from pilot_lib.generate import (
     check_command_availability,
@@ -71,8 +72,6 @@ from pilot_lib.reformat import (
     generate_afl_argv,
 )
 
-
-FEEDBACK = True 
 
 periodic_running = True
 periodic_start_time = None  # Variable to record the start time
@@ -117,7 +116,7 @@ def get_basic_report(
     paths, target, original_target_dir, exec_time, target_cmd,
     process_type, llm_model, strategy, llm_choice,
     fixed_explore_time, temperature, total_time, interval,
-    fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
+    fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
 ):
     print("\n====== Getting output report =======")
     log_json = read_json(paths.logging_path)
@@ -155,14 +154,8 @@ def get_basic_report(
     else:
         fixed_str = ""
 
-    feedback = ''
-    if FEEDBACK:
-        feedback = 'w_feed'
-    else:
-        feedback = 'no_feed'
-
     formatted_id = str(trial_id).zfill(3)
-    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"_{MIN_LENGTH}" + f"_{fixed_explore_time}" + f"_{feedback}" + f"{fixed_str}"
+    destination = paths.archive_dir + "/" + target_cmd + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"{fixed_str}" # + f"_{fixed_explore_time}"
 
     # print(paths.chat_dir)
     # print(paths.snap_dir)
@@ -254,7 +247,7 @@ def get_final_report(
     paths, process_type, start_time, target_cmd, target, original_target_dir,
     fixed_explore_time, temperature, total_time, interval, 
     fixed_metric, llm_choice, llm_model, strategy,
-    MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
+    WO_READ, WO_PATH, WO_VALIDATION
 ):
     global will_show
     if will_show:
@@ -267,7 +260,7 @@ def get_final_report(
         paths, target, original_target_dir, exec_time, target_cmd,
         process_type, llm_model, strategy, llm_choice,
         fixed_explore_time, temperature, total_time, interval,
-        fixed_metric, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION
+        fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
     )
 
 
@@ -283,7 +276,7 @@ def set_timeout(
     result_path, dep_json_path, logging_path,
     fixed_explore_time, temperature, total_time, interval, 
     fixed_metric, llm_choice, llm_model, strategy,
-    chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
+    chat_dir, snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
     cov_report_path, select_path, database_dir, token_path
 ):
     def timeout_handler(signum, frame):
@@ -296,7 +289,7 @@ def set_timeout(
             result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
             fixed_explore_time, temperature, total_time, interval, 
             fixed_metric, llm_choice, llm_model, strategy,
-            chat_dir, snap_dir, MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
+            chat_dir, snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
             cov_report_path, select_path, database_dir, token_path,
             config_data
         )
@@ -451,8 +444,6 @@ def get_strategies(strategy, cent):
     return fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
 
 
-
-
 def initialize(paths, original_target_dir):
 
     delete_directory(paths.meta_dir)
@@ -534,7 +525,6 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     )
 
     if config.cent is None:
-        # optimal_centrality = read_json(paths.strategy_path)
         config.cent = get_estimated_cent(paths.strategy_path)
 
     fixed_metric, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(
@@ -587,15 +577,10 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             api_key=config.api_key,
             azure_endpoint=config.azure_endpoint,
             work_dir=work_dir_abs,
-            # allowed_tools=["Read", "Grep", "Glob", "Edit", "Write"],
             allowed_tools=[
                 "Read", "Grep", "Glob", "Bash",
                 f"Edit({work_dir_abs}/**)",
                 f"Write({work_dir_abs}/**)",
-                # f"Bash(bash {run_all_abs})",
-                # f"Bash(bash {rust_build_abs})",
-                # "Bash(cargo build:*)",
-                # "Bash(cargo check:*)",
             ],
             add_dirs=[database_dir_abs], 
             max_turns=50,
@@ -625,7 +610,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 process_type, start_time, target_cmd, target, original_target_dir,
                 config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
                 fixed_metric, config.llm_choice, config.llm_model, config.strategy,
-                config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION        
+                WO_READ, WO_PATH, WO_VALIDATION        
             )) 
 
         if process_type == "tool":
@@ -703,7 +688,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             # get main-function surrounded 
             get_related_main(
-                paths.program_dir, database_json, target_cmd, home_dir, config.WEIGHT, 
+                paths.program_dir, database_json, target_cmd, home_dir, 
                 paths.work_dir, paths.callee_main_path, paths.callee_path, paths.distance_path, 
                 paths.meta_dir, paths.database_dir
             )
@@ -740,7 +725,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 paths.result_path, paths.dep_json_path, paths.logging_path,
                 config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
                 fixed_metric, config.llm_choice, config.llm_model, config.strategy,
-                paths.chat_dir, paths.snap_dir, config.MIN_LENGTH, WO_READ, WO_PATH, WO_VALIDATION, 
+                paths.chat_dir, paths.snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
                 paths.cov_report_path, paths.select_path, paths.database_dir, paths.token_path
             ) 
             print(f"Target_dir: {paths.target_dir}")
@@ -789,7 +774,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                         paths, llm_interface, config.strategy, config.cent, tool_string, config.max_num_test, config.cov_target, current_coverage, targeted_set, target_cmd, 
                         original_target_dir, fixed_metric, config.fixed_version_count, config.fixed_explore_time, config.explore_fix,
                         database_json, error, std_out, graph_metrics, G,
-                        WO_READ, WO_PATH, WO_VALIDATION, config.MIN_LENGTH, config.GDB_OPTION, config.testfile_counter
+                        WO_READ, WO_PATH, WO_VALIDATION, config.testfile_counter
                     ) 
                     print(f"Target_dir: {paths.target_dir}")
 
@@ -812,7 +797,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                                 paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry, tool_string, fixed_metric,
                                 original_target_dir, config.max_num_test, 
                                 config.fixed_explore_time, config.explore_fix, config.max_iterations, config.fixed_version_count, config.testfile_counter,
-                                WO_READ, WO_PATH, WO_VALIDATION, config.MIN_LENGTH, config.GDB_OPTION,
+                                WO_READ, WO_PATH, WO_VALIDATION,
                                 database_json, error, std_out, graph_metrics, G
                             )
                             # current_coverage = explore_branch(
@@ -946,12 +931,13 @@ if __name__ == "__main__":
     sys_config = read_json(f"{sys_config_path}")
 
     config = merge_config(user_config, sys_config)
+    if config.strategy not in ["wo_read", "wo_t", "random_t", "base"]:
+        raise ValueError('Must within ["wo_read", "wo_t", "random_t", "base"]')
 
     try:
         explorer_main(
             target_cmd, process_type, directory_id, home_dir, config
         )  
-
     except:
         will_show = False
         traceback.print_exc()

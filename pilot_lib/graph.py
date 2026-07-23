@@ -50,7 +50,7 @@ def get_call_site(name, call_site_list):
     return ans
 
 
-def get_edge_weight(callee_path, callee_main_path, distance_path, WEIGHT):
+def get_edge_weight(callee_path, callee_main_path, distance_path):
     
     path_data = []
     result = {} #[]
@@ -877,7 +877,7 @@ def find_all_paths(function_data, function_a, function_b):
 
 
 def get_related_main(
-    program_dir, database_json, target_cmd, CURRENT_PATH, WEIGHT, 
+    program_dir, database_json, target_cmd, CURRENT_PATH, 
     work_dir, callee_main_path, callee_path, distance_path, 
     meta_dir, database_dir
 ):
@@ -937,7 +937,7 @@ def get_related_main(
     
     write_json(callee_main_path, functions)
 
-    get_edge_weight(callee_path, callee_main_path, distance_path, WEIGHT)
+    get_edge_weight(callee_path, callee_main_path, distance_path)
 
     get_total_weight(callee_main_path, distance_path)
 
@@ -1405,4 +1405,7 @@ def write_metrics(target_cmd, graph_metrics):
                 item[key] = result[key]
     
         write_json(meta_path, meta_data)
+
+
+def get_estimated_cent(strategy_path):
 

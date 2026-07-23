@@ -18,8 +18,5 @@
     "output_max": 128000,
     "context_window" : 1000000,
     "AGENT": true,
-    "COUNT_PERIODIC": true,
-    "WEIGHT": null,
-    "MIN_LENGTH" : false,
-    "GDB_OPTION" : false
+    "COUNT_PERIODIC": true
 }

@@ -70,7 +70,6 @@ class ExplorerConfig:
 
     # --- optional / defaulted ---
     WEIGHT: Optional[Any] = None
-    MIN_LENGTH: Optional[Any] = None
     GDB_OPTION: Optional[Any] = None
     azure_endpoint: Optional[str] = None
     strategy: Optional[str] = None
@@ -404,7 +403,6 @@ class RepairContext:
     WO_READ: bool = False
     WO_PATH: bool = False
     WO_VALIDATION: bool = False
-    MIN_LENGTH: bool = False
     GDB_OPTION: bool = False
 
 
