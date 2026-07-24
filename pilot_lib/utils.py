@@ -53,8 +53,8 @@ class ExplorerConfig:
     max_iterations: int
     total_time: int
     interval: int
-    fixed_explore_time: int
-    fixed_version_count: int
+    max_explore_time: int
+    max_version_count: int
     cov_target: str
     explore_time: int
     explore_fix: str
@@ -62,7 +62,7 @@ class ExplorerConfig:
     max_num_test: int
     timeout: int
     output_max: int
-    testfile_counter: int
+    # testfile_counter: int
     context_window: int
     llm_model: str
     AGENT: bool
@@ -327,6 +327,10 @@ class Paths:
         return f"{self.target_dir}/c_build.sh"
     
     @property
+    def info_path(self) -> str:
+        return f"{self.work_dir}/info.json"
+
+    @property
     def seed_dir(self) -> str:
         return f"{self.home_dir}/seeds"
 
@@ -399,17 +403,17 @@ class RepairContext:
     target_cmd: str
     cmd_exe: str
     notes: list
-    cmd_list: list
+    # cmd_list: list
     original_target_dir: str
     original_run_test_path: str
     execute_path: str
     max_num_test: int
     max_iterations: int
-    fixed_version_count: int
-    fixed_metric: Optional[str]
+    max_version_count: int
+    cent_key: Optional[str]
     explore_time: Optional[int]
     repair_count: int = 1
-    testfile_counter: int = 0
+    # testfile_counter: int = 0
     # select: bool = False
 
     # --- strategy flags ---
@@ -1267,7 +1271,7 @@ def write_testcase(run_test_path, snap_dir, timestamp):
 
 def get_is_increased(database_dir, target_entry, previous_coverage, current_coverage, cov_type):
 
-    print(f"\nTarget entry: {target_entry}")
+    # print(f"\nTarget entry: {target_entry}")
     file_path = target_entry['target_path']
     target_line = target_entry['target_line']
     target_branch = target_entry['target_branch']
@@ -1437,9 +1441,9 @@ def run_branch_cov_script(
     is_covered = None
 
     is_covered = get_is_covered(entry, cov_type_path, target_dir, "branch")
-    if is_covered is None:
-        print("cov_type_path")
-        print(cov_type_path)
+    # if is_covered is None:
+    #     print("cov_type_path")
+    #     print(cov_type_path)
 
     is_increased, diff = get_is_increased(database_dir, entry, initial_coverage, current_coverage, "branch")
 
@@ -1674,8 +1678,8 @@ def get_start_line(program, name, file_path, line_number, meta_dir):
     start_line = None
     end_line = None
     meta_data, meta_path = get_metadata(file_path, meta_dir, None)
-    meta_path = f"preset/{program}/{meta_path}"
-    meta_data = read_json(meta_path)
+    # meta_path = f"preset/{program}/{meta_path}"
+    # meta_data = read_json(meta_path)
 
     if meta_data is None: 
         return None, None #, None
@@ -1690,10 +1694,10 @@ def get_start_line(program, name, file_path, line_number, meta_dir):
                 line_number = def_start_line
                 break
         else:
-            if item['name'] == name and def_file_path == file_path and def_file_path <= line_number and line_number <= def_end_line:
+            if item['name'] == name and def_file_path == file_path and def_start_line <= line_number and line_number <= def_end_line:
                 start_line = def_start_line
                 end_line = def_end_line
                 break
 
-    return start_line, end_line #, line_number 
+    return start_line, end_line
 

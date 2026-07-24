@@ -1192,8 +1192,7 @@ def topological_cflow_sort(dependencies):
 
 
 def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_path, reformed_path, isolated_path) -> Dict: 
-    print("analyze_call_dependencies...")
-
+    print("Analyze call dependencies...")
     metadata_files = []
     target_paths = []
     parent_paths = []

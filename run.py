@@ -43,7 +43,6 @@ from c_parser_api import analyze_call_relationship
 
 from pilot_lib.utils import (
     Paths,
-    ExplorerConfig,
     run_script,
     get_coverage,
     merge_config,
@@ -75,7 +74,6 @@ from pilot_lib.reformat import (
     generate_afl_argv,
 )
 
-
 periodic_running = True
 periodic_start_time = None  # Variable to record the start time
 
@@ -96,7 +94,7 @@ def run_periodic(
         else:
             print(f"Elapsed time: {elapsed_time:.2f} seconds ({minutes} min), region: {azure_endpoint}")
 
-        print(f"Target function count: {counter['value']}")
+        print(f"\nTarget function count: {counter['value']}")
 
         branch_path = tmp_branch_path
         line_path = tmp_line_path
@@ -118,8 +116,8 @@ def start_periodic_server(
 def get_basic_report(
     paths, target, original_target_dir, exec_time, target_cmd,
     process_type, llm_model, strategy, llm_choice,
-    fixed_explore_time, temperature, total_time, interval,
-    fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
+    max_explore_time, temperature, total_time, interval,
+    cent, WO_READ, WO_PATH, WO_VALIDATION
 ):
     print("\n====== Getting output report =======")
     log_json = read_json(paths.logging_path)
@@ -152,13 +150,13 @@ def get_basic_report(
         strategy_str = f"_{strategy}" 
         
     fixed_str = ""
-    if fixed_metric is not None:
-        fixed_str = f"_{fixed_metric}"
+    if cent is not None:
+        fixed_str = f"_{cent}"
     else:
         fixed_str = ""
 
     formatted_id = str(trial_id).zfill(3)
-    destination = paths.archive_dir + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"{fixed_str}" # + f"_{fixed_explore_time}"
+    destination = paths.archive_dir + "/" f"{formatted_id}_" f"{process_type}" + f"{llm}" +  f"{strategy_str}" + f"{fixed_str}" # + f"_{max_explore_time}"
 
     # print(paths.chat_dir)
     # print(paths.snap_dir)
@@ -198,7 +196,7 @@ def get_basic_report(
         "llm_model" : llm_model,
         "total_time" : total_time,
         "interval" : interval,  # The measurement interval
-        "explore_time" : fixed_explore_time, # = 300 #180
+        "explore_time" : max_explore_time, # = 300 #180
         "temperature" : temperature,
         #"explore_fix" : explore_fix,
         "WO_READ" : WO_READ,
@@ -251,8 +249,8 @@ def get_basic_report(
 will_show = None
 def get_final_report(
     paths, process_type, start_time, target_cmd, target, original_target_dir,
-    fixed_explore_time, temperature, total_time, interval, 
-    fixed_metric, llm_choice, llm_model, strategy,
+    max_explore_time, temperature, total_time, interval, 
+    cent, llm_choice, llm_model, strategy,
     WO_READ, WO_PATH, WO_VALIDATION
 ):
     global will_show
@@ -265,8 +263,8 @@ def get_final_report(
     get_basic_report(
         paths, target, original_target_dir, exec_time, target_cmd,
         process_type, llm_model, strategy, llm_choice,
-        fixed_explore_time, temperature, total_time, interval,
-        fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
+        max_explore_time, temperature, total_time, interval,
+        cent, WO_READ, WO_PATH, WO_VALIDATION
     )
 
 
@@ -280,8 +278,8 @@ def set_timeout(
     seconds, start_time, process_type, target_cmd, target, 
     target_dir, original_target_dir, archive_dir, meta_dir, 
     result_path, dep_json_path, logging_path,
-    fixed_explore_time, temperature, total_time, interval, 
-    fixed_metric, llm_choice, llm_model, strategy,
+    max_explore_time, temperature, total_time, interval, 
+    cent, llm_choice, llm_model, strategy,
     chat_dir, snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
     cov_report_path, select_path, database_dir, token_path
 ):
@@ -293,8 +291,8 @@ def set_timeout(
             process_type, start_time, 
             target_dir, original_target_dir, archive_dir, 
             result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
-            fixed_explore_time, temperature, total_time, interval, 
-            fixed_metric, llm_choice, llm_model, strategy,
+            max_explore_time, temperature, total_time, interval, 
+            cent, llm_choice, llm_model, strategy,
             chat_dir, snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
             cov_report_path, select_path, database_dir, token_path,
             config_data
@@ -370,26 +368,26 @@ def copy_directory(source_directory, destination_root, target=None):
             traceback.print_exc()
 
 
-def get_fixed_metric(cent):
-    fixed_metric = None
+def get_cent_key(cent):
+    cent_key = None
     # if cent == "random_t":
 
     if cent == "close":
-        fixed_metric = "closeness_centrality"
+        cent_key = "closeness_centrality"
         
     elif cent == "page":
-        fixed_metric = "pagerank"
+        cent_key = "pagerank"
         
     elif cent == "bet":
-        fixed_metric = "betweenness_centrality"
+        cent_key = "betweenness_centrality"
         
     elif cent == "deg":
-        fixed_metric = "degree_centrality"
+        cent_key = "degree_centrality"
     
     elif cent == "katz":
-        fixed_metric = "katz_centrality"
+        cent_key = "katz_centrality"
         
-    return fixed_metric
+    return cent_key
 
 
 def get_random_id(process_type):
@@ -409,45 +407,39 @@ def get_random_id(process_type):
 
 def get_strategies(strategy, cent):
     
-    fixed_metric = None
+    cent_key = None
     WO_READ = False
     WO_PATH = False
     WO_VALIDATION = False
     
+    cent_key = get_cent_key(cent)
+
     if strategy == "wo_read":
         WO_READ = True
-        fixed_metric = get_fixed_metric(cent)  
 
     elif strategy == "wo_t":
         max_target_func = None
 
     elif strategy == "wo_v": # without validation
         WO_VALIDATION = True
-        fixed_metric = get_fixed_metric(cent)  
-
+ 
     elif strategy == "wo_p": # without path guiding
         WO_READ = True   
-        WO_PATH = True #True #False
-        fixed_metric = get_fixed_metric(cent)  
+        WO_PATH = True
 
-    elif strategy == "wo_pv": # without path guiding
+    elif strategy == "wo_pv": # without path guiding + without validation
         WO_VALIDATION = True 
         WO_READ = True   
         WO_PATH = True
-        fixed_metric = get_fixed_metric(cent)  
 
-    elif strategy == "wo_tool": # without tool
-        fixed_metric = get_fixed_metric(cent)
-
+    # elif strategy == "wo_tool": # without tool
+ 
     # elif strategy == "random_t":
-        
-    elif strategy is None: #in ["close", "page", "bet", "deg", "katz"]:
-        fixed_metric = get_fixed_metric(cent)
-        
+           
     # if strategy not in ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]:
     #     raise ValueError('Must within ["wo_read", "wo_t", "random_t", "topo", "page", "katz", "close", "hy", "wo_p", "wo_pv", "wo_v", "bet", "deg", "wo_k", "wo_tool"]')
     
-    return fixed_metric, WO_READ, WO_PATH, WO_VALIDATION
+    return cent_key, WO_READ, WO_PATH, WO_VALIDATION
 
 
 def initialize(paths, original_target_dir):
@@ -468,6 +460,7 @@ def initialize(paths, original_target_dir):
     delete_file(paths.branch_path)
     delete_file(paths.line_path)
     delete_file(paths.priority_path)
+    delete_file(paths.info_path)
 
     delete_file(paths.select_path)
     # delete_file(paths.is_program_path)
@@ -527,7 +520,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             target_cmd, paths
         )
 
-    fixed_metric, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(
+    cent_key, WO_READ, WO_PATH, WO_VALIDATION = get_strategies(
         config.strategy, config.cent
     )
 
@@ -602,15 +595,14 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     will_show = True
     targeted_set = set()
     ommited_files = []
-
     start_time = time.time()
 
     try:
         if process_type == "gen":
             atexit.register(partial(get_final_report, paths, 
                 process_type, start_time, target_cmd, target, original_target_dir,
-                config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
-                fixed_metric, config.llm_choice, config.llm_model, config.strategy,
+                config.max_explore_time, config.temperature, config.total_time, config.interval, 
+                config.cent, config.llm_choice, config.llm_model, config.strategy,
                 WO_READ, WO_PATH, WO_VALIDATION        
             )) 
 
@@ -727,28 +719,30 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 config.total_time, start_time, process_type, target_cmd, target, 
                 paths.target_dir, original_target_dir, paths.archive_dir, paths.meta_dir, 
                 paths.result_path, paths.dep_json_path, paths.logging_path,
-                config.fixed_explore_time, config.temperature, config.total_time, config.interval, 
-                fixed_metric, config.llm_choice, config.llm_model, config.strategy,
+                config.max_explore_time, config.temperature, config.total_time, config.interval, 
+                config.cent, config.llm_choice, config.llm_model, config.strategy,
                 paths.chat_dir, paths.snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
                 paths.cov_report_path, paths.select_path, paths.database_dir, paths.token_path
             ) 
             print(f"Target_dir: {paths.target_dir}")
-            create_permissioned_file(paths.run_test_path)
+            # create_permissioned_file(paths.run_test_path)
 
             graph_metrics, G = build_graph(paths.callee_path, paths.callee_main_path)
 
             error = None
             std_out = None
             cycle = 1
+            testfile_counter = 0
+            current_max_counter = 0
             total_start_time = time.time()
             clear_gcda_files(paths.target_dir)
             tool_string, cmd_self = get_tool_string(paths.tool_json_path, target_cmd, target)
 
             # Write the first testcase
-            # ask_basic_command(
-            #     paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, fixed_metric, config.fixed_version_count,
-            #     original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, config.testfile_counter, WO_VALIDATION
-            # )
+            testfile_counter = ask_basic_command(
+                paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, cent_key, config.max_version_count,
+                original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, testfile_counter, WO_VALIDATION
+            )
 
             counter = {"value": 0}
             current_coverage = None
@@ -774,14 +768,12 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
                 # Explore pathes
                 try:
-                    current_coverage, target_entry = explore_path(
+                    testfile_counter, target_entry = explore_path(
                         paths, llm_interface, config.strategy, config.cent, tool_string, config.max_num_test, config.cov_target, current_coverage, targeted_set, target_cmd, 
-                        original_target_dir, fixed_metric, config.fixed_version_count, config.fixed_explore_time, config.explore_fix,
+                        original_target_dir, cent_key, config.max_version_count, config.max_explore_time, config.explore_fix,
                         database_json, error, std_out, graph_metrics, G,
-                        WO_READ, WO_PATH, WO_VALIDATION, config.testfile_counter
+                        WO_READ, WO_PATH, WO_VALIDATION, testfile_counter
                     ) 
-                    print(f"Target_dir: {paths.target_dir}")
-
                     # # repair branches
                     # target_entry = {
                     #     "target_path": f"{home_dir}/workspace_tiffcp_old/libtiff-git-b51bb/libtiff/tiffiop.h",
@@ -797,10 +789,10 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                     # if TEST is True:
                     if target_entry['is_covered'] is True and target_entry['is_full_branch_covered'] is False:
                         try:
-                            explore_branch(
-                                paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry, tool_string, fixed_metric,
+                            testfile_counter = explore_branch(
+                                paths, llm_interface, config.strategy, config.cov_target, target_cmd, target_entry, tool_string, cent_key,
                                 original_target_dir, config.max_num_test, 
-                                config.fixed_explore_time, config.explore_fix, config.max_iterations, config.fixed_version_count, config.testfile_counter,
+                                config.max_explore_time, config.explore_fix, config.max_iterations, config.max_version_count, testfile_counter,
                                 WO_READ, WO_PATH, WO_VALIDATION,
                                 database_json, error, std_out, graph_metrics, G
                             )
@@ -819,12 +811,15 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                         continue
                     raise
 
-
                 branch_coverage, line_coverage, func_coverage = get_coverage(
                     config.cov_target, paths.target_dir, paths.database_dir, paths.branch_path, paths.line_path, paths.function_path, 
                     paths.is_program_path, paths.current_cov_path
                 )
-                save_coverage_report(config.cov_target, paths.cov_report_path, paths.token_path, branch_coverage, line_coverage, func_coverage, None)
+
+                current_coverage = save_coverage_report(
+                    config.cov_target, paths.cov_report_path, paths.token_path, 
+                    branch_coverage, line_coverage, func_coverage, None
+                )
 
                 if config.strategy == "wo_t":
                     print("Finished: WO_TARGET senario done!")

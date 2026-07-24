@@ -17,6 +17,7 @@ from utils_api import (
     write_file,
     delete_file,
     create_permissioned_file,
+    grant_permission_to_file,
     append_file,
     get_timestamp,
     get_coverage,
@@ -238,19 +239,24 @@ def ask_basic_command_llm(ctx):
     
     print("Asking basic commands...")
     output_max = ctx.llm_interface.output_max
-    prompt = []
+
+    delete_file(ctx.paths.run_test_path)
+    delete_file(ctx.paths.info_path)
+
     sum_modified_list = []
     opt_sum_modified_list = []
-
     initial_std_out = None
+    rsp_json = None
+    count = 0
 
     pure_cmd = get_pure_cmd(ctx.target_cmd)
-    
+    tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
+
+    prompt = []
     prompt.extend([f"Please write a shell script that demonstrates the most basic usage of {pure_cmd} command to process an input file.",
                    "I want to see the simplest command invocation with minimal options, just specifying an input file and executing it."
                    ])
     
-    tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
     prompt.extend(["", "## Response rules:",
                          f"- Please write the response shell script to the path {ctx.paths.run_test_path}.",
                          f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
@@ -264,7 +270,9 @@ def ask_basic_command_llm(ctx):
                          f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute commands using only existing binaries.",
                          #f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                          #f"- Please set as many options as possible in a single command to explore more execution paths.",
-                         f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                         f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                         #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                         f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                          #f"- Please also include commands to create input files within the shell script.",
                          #f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                          f"{tool_cmd}",
@@ -281,11 +289,6 @@ def ask_basic_command_llm(ctx):
 
     prompt.extend(["- In summary, please respond in the following JSON format:"]) 
     prompt.extend([basic_template]) 
-
-    rsp_json = None
-    count = 0
-
-    delete_file(ctx.paths.run_test_path)
 
     prompt.extend([f"\n## Current content of the {ctx.paths.run_test_path} file:"])
     file_string = get_lined_code(ctx.paths.run_test_path, ctx.paths.work_dir)
@@ -386,7 +389,9 @@ def ask_basic_command_llm(ctx):
                          f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute commands using only existing binaries.",
                          #f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                          #f"- Please set as many options as possible in a single command to explore more execution paths.",
-                         f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                         f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                         #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                         f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                          #f"- Please also include commands to create input files within the shell script.",
                          # f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                          f"{tool_cmd}",
@@ -504,6 +509,19 @@ def ask_basic_command_llm(ctx):
     print("============= answer =============")
 
 
+def get_testfile_counter(ctx):
+    """Determine the next input file counter to use, based on info.json.
+    Falls back to ctx.testfile_counter when info.json is unavailable."""
+    current_max_counter = ctx.testfile_counter
+    if os.path.exists(ctx.paths.info_path):
+        info_data = read_json(ctx.paths.info_path)
+        if info_data is None or 'max_counter' not in info_data:
+            current_max_counter = 0
+        else:
+            current_max_counter = info_data['max_counter'] + 1
+    return current_max_counter
+
+
 def ask_basic_command_agent(ctx):
     """ask_agent version of ask_basic_command.
     
@@ -529,6 +547,7 @@ def ask_basic_command_agent(ctx):
 
     pure_cmd = get_pure_cmd(ctx.target_cmd)
     delete_file(ctx.paths.run_test_path)
+    delete_file(ctx.paths.info_path)
 
     error = None
     std_out = None
@@ -562,7 +581,9 @@ def ask_basic_command_agent(ctx):
                              "- The shell script will be executed in the directory where the file is located, so please write the code considering this point.",
                              f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                              f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute commands using only existing binaries.",
-                             f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                             f"- Please make input files that commands use have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                             #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of the {ctx.paths.info_path} JSON file.",
+                             f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                              f"{tool_cmd}",
                              f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                              f"- Please do not include commands that delete input files in the shell script.",
@@ -613,7 +634,9 @@ def ask_basic_command_agent(ctx):
         result = ask_agent(prompt, memory_type, ctx.llm_interface)
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
-
+        
+        current_max_counter = get_testfile_counter(ctx)
+                
         # --- run the script the agent just wrote ---
         error, std_out, ctx.repair_count = run_script(
             ctx.paths.run_test_path, 100, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
@@ -634,9 +657,11 @@ def ask_basic_command_agent(ctx):
     write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
     print("============= answer =============")
 
+    return current_max_counter
+
 
 def ask_basic_command(
-    paths, llm_interface, target_cmd, cov_target, max_num_test, fixed_metric, fixed_version_count,
+    paths, llm_interface, target_cmd, cov_target, max_num_test, cent_key, max_version_count,
     original_target_dir, database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
 ):
 
@@ -653,14 +678,13 @@ def ask_basic_command(
         target_cmd=target_cmd,
         cmd_exe=cmd_exe,
         notes=None,
-        cmd_list=None,
         original_target_dir=original_target_dir,
         original_run_test_path=None,
         execute_path=execute_path,
         max_num_test=max_num_test,
         max_iterations=max_iterations,
-        fixed_version_count=fixed_version_count,
-        fixed_metric=fixed_metric,
+        max_version_count=max_version_count,
+        cent_key=cent_key,
         explore_time=None,
         repair_count=1,
         testfile_counter=testfile_counter,
@@ -670,10 +694,11 @@ def ask_basic_command(
     )
 
     if llm_interface.AGENT is False:
-        ask_basic_command_llm(ctx)
+        current_max_counter = ask_basic_command_llm(ctx)
     else:
-        ask_basic_command_agent(ctx)
+        current_max_counter = ask_basic_command_agent(ctx)
 
+    return current_max_counter
 
 def write_time(time_path, activity, action, strategy, timestamp=None):
     formatted_time = None
@@ -880,6 +905,7 @@ def repair_test_llm(ctx):
     explore_count = 0 
 
     delete_file(ctx.paths.run_test_path)
+    delete_file(ctx.paths.info_path)
     create_permissioned_file(ctx.paths.run_test_path)
 
     execute_dir = os.path.dirname(os.path.normpath(ctx.execute_path))
@@ -937,7 +963,7 @@ def repair_test_llm(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > ctx.fixed_version_count:
+        if version_count > ctx.max_version_count:
             break
 
         if mode != "read_data":
@@ -1008,7 +1034,9 @@ def repair_test_llm(ctx):
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                         f"- Please set as many options as possible in a single command to explore more execution paths.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         #f"- Please also include commands to create input files within the shell script.",
                         #f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                         f"{tool_cmd}",
@@ -1037,7 +1065,9 @@ def repair_test_llm(ctx):
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                         #f"- Please set as many options as possible in a single command to explore more execution paths.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         #f"- Please also include commands to create input files within the shell script.",
                         #f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                         f"{tool_cmd}",
@@ -1556,6 +1586,8 @@ def repair_test_llm(ctx):
         "min_length" : min_length,
         "max_length" : max_length,
         "original_run_test_path" : ctx.original_run_test_path,
+        #"current_coverage" : current_coverage,
+        "current_max_counter" : current_max_counter
     }
 
     if ctx.strategy == "base": # is True:  #if select_flag is True:
@@ -1616,6 +1648,9 @@ def repair_test_agent(ctx):
     })
     if agent.session_path:
         delete_file(agent.session_path)
+    
+    delete_file(ctx.paths.run_test_path)
+    delete_file(ctx.paths.info_path)
 
     pure_cmd = get_pure_cmd(ctx.target_cmd)
     llm_start_time = time.time()
@@ -1640,7 +1675,7 @@ def repair_test_agent(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > ctx.fixed_version_count:
+        if version_count > ctx.max_version_count:
             break
 
         # measure the coverage of the run_test_path the agent wrote last iteration
@@ -1693,7 +1728,9 @@ def repair_test_agent(ctx):
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                         f"- Please set as many options as possible in a single command to explore more execution paths.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         f"{tool_cmd}",
                         f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                         f"- Please do not include commands that delete input files in the shell script.",
@@ -1713,7 +1750,9 @@ def repair_test_agent(ctx):
                         f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         f"{tool_cmd}",
                         f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                         f"- Please do not include commands that delete input files in the shell script.",
@@ -1810,6 +1849,8 @@ def repair_test_agent(ctx):
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
 
+        current_max_counter = get_testfile_counter(ctx)
+
         ctx.repair_count += 1
 
     llm_end_time = time.time()
@@ -1828,6 +1869,8 @@ def repair_test_agent(ctx):
         "min_length" : min_length,
         "max_length" : max_length,
         "original_run_test_path" : ctx.original_run_test_path,
+        #"current_coverage" : current_coverage,
+        "current_max_counter" : current_max_counter
     }
 
     if ctx.strategy == "base":
@@ -1844,15 +1887,15 @@ def repair_test_agent(ctx):
     return ans_entry
 
 
-def sort_by_centrality(data, graph_metrics, fixed_metric):
+def sort_by_centrality(data, graph_metrics, cent_key):
     for key, item in data.items():
         item["metrics"] = get_metrics(item, graph_metrics)
 
     # Sort by the specified centrality metric
     sort_by = "closeness_centrality"
 
-    if fixed_metric is not None:
-        sort_by = fixed_metric
+    if cent_key is not None:
+        sort_by = cent_key
     
     # Create a list of keys and sort by the corresponding value's metric
     if sort_by == "pagerank":
@@ -1885,7 +1928,7 @@ def sort_by_centrality(data, graph_metrics, fixed_metric):
 
 def get_pure_target(
     strategy, target_cmd, target_dir, meta_dir, database_dir, work_dir, targeted_set,
-    is_program_path, callee_path, callee_main_path, graph_metrics, fixed_metric, WO_PATH
+    is_program_path, callee_path, callee_main_path, graph_metrics, cent_key, WO_PATH
 ):
     # Prepare priority data
     data = read_json(callee_path)
@@ -1931,7 +1974,7 @@ def get_pure_target(
     # print(len(data))
     # print("++++++++++++++++")
 
-    data = sort_by_centrality(data, graph_metrics, fixed_metric)
+    data = sort_by_centrality(data, graph_metrics, cent_key)
     write_json(f"{database_dir}/sorted.json", data)
 
     PURE_SORTED = True
@@ -2008,7 +2051,8 @@ def update_select(select_path, target_data):
 
 
 def gen_priority(
-    priority_path, function_path, callee_main_path
+    target_cmd, meta_dir, database_dir, 
+    priority_path, function_path, callee_path, callee_main_path
 ):  
     cov_data = read_json(function_path)
     related_ids = get_related_data(callee_main_path)
@@ -2032,7 +2076,7 @@ def gen_priority(
     write_json(new_callee_main_path, new_callee_data)
 
     # updated graph
-    metrics, G = build_graph(call_graph, new_callee_main_path)
+    metrics, G = build_graph(callee_path, new_callee_main_path)
 
     related_ids = get_related_data(new_callee_main_path)
 
@@ -2117,7 +2161,9 @@ def get_surround(callee_main_path):
     return related_list
 
 
-def use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric):
+def use_metrics(
+    targeted_set, summary, ratios, priority_path, callee_main_path, cent_key
+):
     print("Listing up target_funcs")
 
     related_list = get_surround(callee_main_path)
@@ -2126,7 +2172,7 @@ def use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric):
 
     # A way to do the two-stage sort at once
     # Sort by uncovered_ratio in descending order, and for equal values, sort by pagerank in descending order
-    summary = sorted(summary, key=lambda x: (-x.get('uncovered_ratio', 0), -x.get(fixed_metric, 0)))
+    summary = sorted(summary, key=lambda x: (-x.get('uncovered_ratio', 0), -x.get(cent_key, 0)))
     write_json(priority_path, summary)
 
     for i in range(0, len(summary)-1):
@@ -2138,12 +2184,11 @@ def use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric):
 
     write_json(priority_path, summary)
 
-
     target_entry = {}
     for i in range(0, len(summary)-1):
         function_id = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
 
-        if FUNCTION_WRAP:
+        if 'line_number' in summary[i]:
             func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['line_number']}"
         else:
             func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
@@ -2155,7 +2200,7 @@ def use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric):
             target_entry['target_function'] = summary[i]['name']
             target_entry['target_branch'] = summary[i]['branch']
             target_entry['target_uncovered_ratio'] = summary[i]['uncovered_ratio']
-            target_entry['target_uncovered_ratio'] = summary[i][fixed_metric]
+            target_entry['target_uncovered_ratio'] = summary[i][cent_key]
 
             targeted_set.add(func_key)
             break
@@ -2195,7 +2240,7 @@ def use_random_target(targeted_set, summary_data, target_dir, branch_path, calle
         if func_name == "main":
             is_main = True
 
-        if FUNCTION_WRAP:
+        if 'line_number' in selected_branch: #FUNCTION_WRAP:
             func_key = f"{func_name}@{selected_branch['file_path']}:{selected_branch['line_number']}"
         else:
             func_key = f"{func_name}@{selected_branch['file_path']}:{selected_branch['func_start_line']}"
@@ -2227,7 +2272,8 @@ def use_random_target(targeted_set, summary_data, target_dir, branch_path, calle
 
 
 def get_target_entry(
-    cent, targeted_set, target_dir, is_program_path, function_path, priority_path, callee_main_path
+    target_cmd, strategy, cent, cent_key, targeted_set, target_dir, database_dir, meta_dir, 
+    is_program_path, current_coverage_info_path, function_path, priority_path, callee_path, callee_main_path
 ):  
     # Prepare priority data
     random = get_random_void()
@@ -2264,7 +2310,10 @@ def get_target_entry(
     get_function_coverage(coverage_info_path, target_dir, function_path, is_program_path)
     delete_file(coverage_info_path)
 
-    summary = gen_priority(priority_path, function_path, callee_main_path) # , G, metrics
+    summary = gen_priority(
+        target_cmd, meta_dir, database_dir,
+        priority_path, function_path, callee_path, callee_main_path
+    ) 
 
     if len(summary) == 0:
         return {}
@@ -2275,12 +2324,16 @@ def get_target_entry(
   
     target_entry = {}
     #1. For the same uncovered_ratio, prefer the path with fewer dependencies
-    if METRIC is True:  # if PAGERANK:
-        target_entry = use_metrics(targeted_set, summary, ratios, callee_main_path, fixed_metric)
+    if strategy == "base": #METRIC is True:  # if PAGERANK:
+        target_entry = use_metrics(
+            targeted_set, summary, ratios, priority_path, callee_main_path, cent_key
+        )
 
     #4. random
-    elif RANDOM_TARGET:
-        target_entry = use_random_target(targeted_set, summary, target_dir, function_path, callee_main_path)
+    elif strategy == "random_t": #RANDOM_TARGET:
+        target_entry = use_random_target(
+            targeted_set, summary, target_dir, function_path, callee_main_path
+        )
 
     print("========== Selected Target ==========")
     print(target_entry)
@@ -2291,28 +2344,28 @@ def get_target_entry(
 
 def explore_path(
     paths, llm_interface, strategy, cent, tool_string, max_num_test, cov_target, current_coverage, targeted_set, target_cmd, 
-    original_target_dir, fixed_metric, fixed_version_count, fixed_explore_time, explore_fix,
+    original_target_dir, cent_key, max_version_count, max_explore_time, explore_fix,
     database_json, error, std_out, graph_metrics, G,
     WO_READ, WO_PATH, WO_VALIDATION, testfile_counter
 ): 
-    
-    entry = {}
     if strategy != "wo_t":
         if current_coverage == 0 or current_coverage is None:
             target_entry = get_pure_target(
                 strategy, target_cmd, paths.target_dir, paths.meta_dir, paths.database_dir, paths.work_dir, targeted_set, 
-                paths.is_program_path, paths.callee_path, paths.callee_main_path, graph_metrics, fixed_metric, WO_PATH
+                paths.is_program_path, paths.callee_path, paths.callee_main_path, graph_metrics, cent_key, WO_PATH
             ) 
-            print("Pure")
+            print("Getting the first target...")
         else:
             target_entry = get_target_entry(
-                cent, targeted_set, paths.target_dir, 
-                paths.is_program_path, paths.function_path, paths.priority_path, paths.callee_main_path
+                target_cmd, strategy, cent, cent_key, targeted_set, paths.target_dir, paths.database_dir, paths.meta_dir, 
+                paths.is_program_path, paths.current_cov_path, paths.function_path, paths.priority_path, paths.callee_path, paths.callee_main_path
             ) 
+            print("Getting the next target...")
 
-
-        print(f"\nTarget is {target_entry}")
-
+        print(f"\n=====================================")
+        print(f"Target entry @explore_path: {target_entry}")
+        print("=====================================")
+        
     else:
         target_entry = {
             'target_path' : None,
@@ -2326,14 +2379,13 @@ def explore_path(
         }
 
     # setup for asking llm
-    cmd_list = []
     cmd_exe = database_json[target_cmd]["cmd_exe"]
     notes = database_json[target_cmd]["notes"]
 
     execute_path = f"{paths.work_dir}/execute.sh"
 
     if explore_fix == "t":
-        explore_time = fixed_explore_time
+        explore_time = max_explore_time
     else:
         explore_time = target_entry['explore_time']
 
@@ -2349,14 +2401,13 @@ def explore_path(
         target_cmd=target_cmd,
         cmd_exe=cmd_exe,
         notes=notes,
-        cmd_list=cmd_list,
         original_target_dir=original_target_dir,
         original_run_test_path=None,
         execute_path=execute_path,
         max_num_test=max_num_test,
         max_iterations=None,
-        fixed_version_count=fixed_version_count,
-        fixed_metric=fixed_metric,
+        max_version_count=max_version_count,
+        cent_key=cent_key,
         explore_time=explore_time,
         repair_count=repair_count,
         testfile_counter=testfile_counter,
@@ -2417,7 +2468,7 @@ def explore_path(
     target_entry['is_full_branch_covered'] = ans_entry['is_full_branch_covered']
     target_entry['original_run_test_path'] = ans_entry['original_run_test_path']
 
-    return current_coverage, target_entry
+    return ans_entry['current_max_counter'], target_entry
 
 
 def get_annotated_source_code_range(target_file_path, start_line=None, end_line=None):
@@ -2595,7 +2646,7 @@ def repair_branch_llm(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > ctx.fixed_version_count:
+        if version_count > ctx.max_version_count:
             break
 
         if mode != "read_data":
@@ -2665,7 +2716,9 @@ def repair_branch_llm(ctx):
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                         f"- Please set as many options as possible in a single command to explore more execution paths.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         #f"- Please also include commands to create input files within the shell script. In that time, please always generate valid input files using standard tools appropriate for the file type because invalid files cause early rejection and prevent deep code coverage.",
                         # f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                         f"{tool_cmd}",
@@ -2725,7 +2778,9 @@ def repair_branch_llm(ctx):
                         f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                         f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                         #f"- Please set as many options as possible in a single command to explore more execution paths.",
-                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                        #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                        f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                         #f"- Please also include commands to create input files within the shell script.",
                         # f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                         f"{tool_cmd}",
@@ -2747,7 +2802,9 @@ def repair_branch_llm(ctx):
                 tool_cmd = get_tool_cmd(ctx.strategy, ctx.tool_string)
                 prompt = [f"Please modify the test case {ctx.paths.run_test_path} to increase coverage for the program.",
                           f"- Please set as many options as possible in a single command to explore more execution paths.",
-                          f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater. Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                          f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                          #f"- Also, please include the maximum counter value of the filenames used in your response in the \"max_counter\" root-level JSON key of a JSON file.",
+                          f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                           #f"- Please also include commands to create input files within the shell script.",
                           # f"- Please include commands to create valid input files using appropriate standard tools: {ctx.tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage.",
                           f"{tool_cmd}",
@@ -3157,20 +3214,22 @@ def repair_branch_llm(ctx):
     llm_end_time = time.time()
     write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
-    if ctx.strategy == "base": # is True:  #if select_flag is True:
-        ans_entry = {
-            "repair_count" : ctx.repair_count,
-            "version_count" : version_count, 
-            "is_covered" : is_covered,
-            "elapsed_time" : elapsed_time,
-            "diff" : diff,
-            "timestamp" : timestamp,
-            "path_count" : path_count,
-            "min_length" : min_length,
-            "max_length" : max_length
-        }
-        return ans_entry #ctx.repair_count, is_covered, elapsed_time, diff
-    
+    # if ctx.strategy == "base": # is True:  #if select_flag is True:
+    ans_entry = {
+        "repair_count" : ctx.repair_count,
+        "version_count" : version_count, 
+        "is_covered" : is_covered,
+        "elapsed_time" : elapsed_time,
+        "diff" : diff,
+        "timestamp" : timestamp,
+        "path_count" : path_count,
+        "min_length" : min_length,
+        "max_length" : max_length,
+        #"current_coverage" : current_coverage,
+        "current_max_counter" : current_max_counter
+    }
+    return ans_entry #ctx.repair_count, is_covered, elapsed_time, diff
+
 
 def repair_branch_agent(ctx):
     """ask_agent version of repair_branch.
@@ -3212,6 +3271,9 @@ def repair_branch_agent(ctx):
     })
     if agent.session_path:
         delete_file(agent.session_path)
+    
+    delete_file(ctx.paths.run_test_path)
+    delete_file(ctx.paths.info_path)
 
     llm_start_time = time.time()
     write_time(ctx.paths.time_path, "llm", "start", ctx.strategy, llm_start_time)
@@ -3231,7 +3293,7 @@ def repair_branch_agent(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
-        if version_count > ctx.fixed_version_count:
+        if version_count > ctx.max_version_count:
             break
 
         if ctx.strategy == "wo_t" and ctx.repair_count > 1:
@@ -3369,6 +3431,8 @@ def repair_branch_agent(ctx):
         if result.is_error:
             print(f"[agent] run reported error (turns={result.num_turns})")
 
+        current_max_counter = get_testfile_counter(ctx)
+
         # --- measure branch coverage of the run_test_path the agent just wrote ---
         if ctx.strategy == "base":
             error, std_out, is_covered, is_increased, diff, current_branch_coverage, branch_coverage, line_coverage, function_coverage, timestamp = run_branch_cov_script(
@@ -3399,41 +3463,41 @@ def repair_branch_agent(ctx):
     llm_end_time = time.time()
     write_time(ctx.paths.time_path, "llm", "end", ctx.strategy, llm_end_time)
 
-    if ctx.strategy == "base":
-        ans_entry = {
-            "repair_count" : ctx.repair_count,
-            "version_count" : version_count,
-            "is_covered" : is_covered,
-            "elapsed_time" : elapsed_time,
-            "diff" : diff,
-            "timestamp" : timestamp,
-            "path_count" : path_count,
-            "min_length" : min_length,
-            "max_length" : max_length,
-        }
-        return ans_entry
+    #if ctx.strategy == "base":
+    ans_entry = {
+        "repair_count" : ctx.repair_count,
+        "version_count" : version_count,
+        "is_covered" : is_covered,
+        "elapsed_time" : elapsed_time,
+        "diff" : diff,
+        "timestamp" : timestamp,
+        "path_count" : path_count,
+        "min_length" : min_length,
+        "max_length" : max_length,
+        #"current_coverage" : current_coverage,
+        "current_max_counter" : current_max_counter
+    }
+    return ans_entry
 
 
 def explore_branch(
-    paths, llm_interface, strategy, cov_target, target_cmd, target_entry, tool_string, fixed_metric,
+    paths, llm_interface, strategy, cov_target, target_cmd, target_entry, tool_string, cent_key,
     original_target_dir, max_num_test, 
-    fixed_explore_time, explore_fix, max_iterations, fixed_version_count, testfile_counter,
+    max_explore_time, explore_fix, max_iterations, max_version_count, testfile_counter,
     WO_READ, WO_PATH, WO_VALIDATION,
     database_json, error, std_out, graph_metrics, G
 ):
-    entry = {}
-    print("=====================================")
-    print(f"target_entry is {target_entry}")
+    print(f"\n=====================================")
+    print(f"Target entry @explore_branch: {target_entry}")
     print("=====================================")
 
     # setup for asking llm
-    cmd_list = []
     cmd_exe = database_json[target_cmd]["cmd_exe"]
     notes = database_json[target_cmd]["notes"]
     execute_path = f"{paths.work_dir}/execute.sh"
 
     if explore_fix == "t":
-        explore_time = fixed_explore_time
+        explore_time = max_explore_time
     else:
         explore_time = target_entry['explore_time']
 
@@ -3448,14 +3512,13 @@ def explore_branch(
         target_cmd=target_cmd,
         cmd_exe=cmd_exe,
         notes=notes,
-        cmd_list=cmd_list,
         original_target_dir=original_target_dir,
         original_run_test_path=target_entry['original_run_test_path'],
         execute_path=execute_path,
         max_num_test=max_num_test,
         max_iterations=max_iterations,
-        fixed_version_count=fixed_version_count,
-        fixed_metric=fixed_metric,
+        max_version_count=max_version_count,
+        cent_key=cent_key,
         explore_time=explore_time,
         repair_count=repair_count,
         testfile_counter=testfile_counter,
@@ -3509,4 +3572,6 @@ def explore_branch(
     
     # print(f"Current coverage: {current_coverage}")
     # return current_coverage 
+
+    return ans_entry["current_max_counter"]
 
