@@ -1,9 +1,9 @@
 #!/bin/bash
 # Script configuration
-SOURCE_DIR="/root/PILOT/scripts"  #"build_argv"  #"build_asan"  # Source directory (copy from build_shell)
+SOURCE_DIR="/root/PILOT/scripts"  # Source directory (copy from build_shell)
 TARGET_DIR="/root/PILOT/program"  # Restore destination directory (current directory)
 FILE_NAME="c_build.sh"
-FILE_PATTERN="c_build_*.sh"  # Changed to a pattern
+FILE_PATTERN="c_build*.sh"  # Changed to a pattern
 # FILE_PATTERN="BBtargets_*.txt"  # Changed to a pattern
 # Move
 # Check whether the build_shell directory exists
@@ -39,4 +39,3 @@ find "$SOURCE_DIR" -name "$FILE_PATTERN" -type f | while read -r filepath; do
     
     echo "Restored: $filepath -> $dest_path"
 done
-echo "All c_build.sh files have been restored from build_shell directory to their original locations."

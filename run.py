@@ -48,7 +48,12 @@ from pilot_lib.utils import (
     merge_config,
 )
 
-from pilot_lib.tool import find_tool, get_tool_string
+from pilot_lib.tool import (
+    find_tool, 
+    get_tool_string,
+    native_tool_configuration,
+)
+
 from pilot_lib.analyze import search_main
 from pilot_lib.graph import (
     analyze_call_dependencies,
@@ -58,7 +63,6 @@ from pilot_lib.graph import (
     get_estimated_cent,
 )
 from pilot_lib.generate import (
-    check_command_availability,
     ask_basic_command,
     explore_path,
     explore_branch,
@@ -607,10 +611,15 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             )) 
 
         if process_type == "tool":
-            if not os.path.exists(paths.tool_dir):
-                create_directory(paths.tool_dir)
+            if os.path.exists(paths.chat_dir):
+                delete_directory(paths.chat_dir)
+            create_directory(paths.chat_dir)
 
-            find_tool(target, target_cmd, paths.target_dir, llm_interface, config.os_version)
+            if os.path.exists(paths.tool_dir):
+                delete_directory(paths.tool_dir)
+            create_directory(paths.tool_dir)
+
+            native_tool_configuration(target, target_cmd, paths.target_dir, paths.tool_dir, paths.tool_json_path, llm_interface, config.os_version)
 
         elif process_type == "prepare":
             print("Preparing ...")
@@ -712,7 +721,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             record_log(paths.log_path)
 
             # func_sum = get_func_sum(paths.callee_main_path)
-            check_command_availability(paths.tool_json_path, target_cmd, target)
+            # check_command_availability(paths.tool_json_path, target_cmd, target)
         
             # Set at the start of execution
             set_timeout(
@@ -946,10 +955,10 @@ if __name__ == "__main__":
 
 
 """
-python3 run.py tiffcp_old tool
 python3 run.py tiffcp_old prepare
 python3 run.py tiffcp_old preset
 python3 run.py tiffcp_old gcno
+python3 run.py tiffcp_old tool
 python3 run.py tiffcp_old gen
 
 python3 run.py tiffcp_old exp
@@ -958,4 +967,31 @@ python3 run.py tiffcp_old file 000
 python3 run.py tiffcp_old carpet 000
 python3 run.py tiffcp_old zig 000
 python3 run.py tiffcp_old afl_argv 000
+
+
+python3 run.py jpegoptim_old prepare
+python3 run.py eu-elfclassify_old prepare
+
+python3 run.py jpegoptim_old tool
+python3 run.py eu-elfclassify_old tool
+"""
+
+"""
+python3 run.py avconv_old prepare
+python3 run.py bison_old prepare
+python3 run.py cjpeg_old prepare
+python3 run.py ffmpeg_old prepare
+python3 run.py gm_old prepare
+
+python3 run.py gs_old prepare
+python3 run.py jasper_old prepare
+python3 run.py mpg123_old prepare
+python3 run.py nasm_old prepare
+python3 run.py objdump_old prepare
+python3 run.py pspp_old prepare
+python3 run.py xmllint_old prepare
+
+python3 run.py xmlwf_old prepare
+python3 run.py yara_old prepare
+python3 run.py vim_old prepare
 """

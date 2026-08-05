@@ -410,10 +410,10 @@ class RepairContext:
     max_num_test: int
     max_iterations: int
     max_version_count: int
+    testfile_counter: int # = 0
     cent_key: Optional[str]
     explore_time: Optional[int]
     repair_count: int = 1
-    # testfile_counter: int = 0
     # select: bool = False
 
     # --- strategy flags ---

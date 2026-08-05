@@ -98,56 +98,6 @@ def get_func_sum(callee_main_path):
     return len(related_data)
 
 
-def check_command_availability(tool_json_path, target_cmd, target) -> Dict[str, bool]:
-    """
-    Check if commands specified in the JSON are available on the system.
-    Args:
-        tools_json: List of tool dictionaries with 'command_name' field
-        
-    Returns:
-        Dictionary mapping command_name to availability (True/False)
-    """
-    tools_data = read_json(tool_json_path)
-    availability = {}
-    
-    for tool in tools_data:
-        command_name = tool.get('command_name')
-        if not command_name:
-            continue
-            
-        try:
-            # Use 'command -v' to check if command exists
-            result = subprocess.run(
-                ['command', '-v', command_name],
-                shell=True,
-                executable='/bin/bash',
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            availability[command_name] = (result.returncode == 0)
-        except (subprocess.TimeoutExpired, Exception):
-            availability[command_name] = False
-    
-    print("Command availability:")
-    for cmd, avail in availability.items():
-        status = "✓ Available" if avail else "✗ Missing"
-        print(f"  {cmd}: {status}")
-    
-    # Get lists
-    available = [cmd for cmd, avail in availability.items() if avail]
-    missing = [cmd for cmd, avail in availability.items() if not avail]
-    print(f"\nAvailable: {available}")
-    print(f"Missing: {missing}")
-    if len(missing) > 0:
-        raise ValueError("Missing exists")
-    
-    tool_string, cmd_self = get_tool_string(tool_json_path, target_cmd, target)
-    if tool_string == "":
-        raise ValueError("tool_string is empty")
-        
-    return availability
-
 
 def get_tool_cmd(strategy, tool_string):
     tool_cmd = f"- Please include commands to create valid input files using appropriate standard tools: {tool_string}. Do not manually construct file headers or use placeholder data. Invalid files cause early rejection and low coverage."
