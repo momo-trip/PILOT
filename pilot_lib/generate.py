@@ -615,6 +615,8 @@ def ask_basic_command(
     original_target_dir, database_json, max_iterations, tool_string, strategy, testfile_counter, WO_VALIDATION
 ):
 
+    print("Asking basic commands...")
+    
     execute_path = f"{paths.work_dir}/execute.sh"
     cmd_exe = database_json[target_cmd]["cmd_exe"]
 
@@ -1893,12 +1895,13 @@ def get_pure_target(
     meta_paths = []
     explored = set()
 
-    select_data = read_json(f"rq1/cov_select_{target_cmd}.json")
+    """
+    select_data = read_json(f"select/cov_select_{target_cmd}.json")
     if select_data is not None:
         for item in select_data:
-            #if item['is_covered'] is True:
             key = f"{item['name']}@{item['file_path']}:{item['line_number']}"
             explored.add(key)
+    """
 
     for key, item in data.items():
         if key not in related_ids:
@@ -2073,8 +2076,18 @@ def gen_priority(
 
 
     for item in callee_data:
+        if item['start_line'] is None:
+            continue
+
+        end_line = item['end_line']
+        if end_line is None:
+            end_line = item['start_line']
+
+        """
         if item['end_line'] is None:
             continue
+        """
+
         key = item['function_id']
         if key not in seen:
             insert = {
@@ -2086,7 +2099,7 @@ def gen_priority(
                     "branch": None,
                     "uncovered_ratio": 0, #None,
                     "func_start_line": item['start_line'],
-                    "func_end_line": item['end_line']
+                    "func_end_line": end_line, #item['end_line']
                 }
 
             metric = get_function_centrality(key, metrics)

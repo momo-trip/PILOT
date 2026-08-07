@@ -19,14 +19,7 @@ from utils_api import (
     parse_def_loc,
 )
 
-
 from dataclasses import dataclass, field
-from typing import Any, Optional
-
-from dataclasses import dataclass
-
-
-from dataclasses import dataclass
 from typing import Optional, Any
 
 
@@ -46,7 +39,7 @@ class ExplorerConfig:
     # --- identity / paths ---
     user_id: str
     database_path: str
-    macro_parser_dir: str
+    #macro_parser_dir: str
 
     # --- run settings ---
     max_target_func: int
@@ -88,7 +81,7 @@ class Paths:
     target_cmd: str
     process_type: str
     home_dir: str
-    macro_parser_dir: str
+    #macro_parser_dir: str
     target: str
     directory_id: str
 
@@ -378,9 +371,9 @@ class Paths:
     def decision_path(self) -> str:
         return "decision.json"
 
-    @property
-    def macro_finder(self) -> str:
-        return f"{self.macro_parser_dir}/macro_finder/build/macro-finder"
+    # @property
+    # def macro_finder(self) -> str:
+    #     return f"{self.macro_parser_dir}/macro_finder/build/macro-finder"
 
 
 def merge_config(user_config: dict, sys_config: dict) -> ExplorerConfig:
@@ -1523,14 +1516,20 @@ def get_metrics(item, graph_metrics):
 
     if 'definition' in item:
         file_path, start_line, _ = parse_def_loc(item['definition'])
-        
-    elif 'def_file_path' in item:
-        file_path = item['def_file_path']
-        start_line = item['def_start_line']
+    
+    else:
+        if 'file_path' in item:
+            file_path = item['file_path']
 
-    elif 'file_path' in item:
-        file_path = item['file_path']
-        start_line = item['start_line']
+        elif 'def_file_path' in item:
+            file_path = item['def_file_path']
+
+        if 'start_line' in item:
+            start_line = item['start_line']
+
+        elif 'def_start_line' in item:
+            start_line = item['def_start_line']
+
 
     target_function_id = f"{item['name']}@{file_path}:{start_line}"
     

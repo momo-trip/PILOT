@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script configuration
-SOURCE_DIR="/root/PILOT/scripts"  # Source directory (copy from build_shell)
-TARGET_DIR="/root/PILOT/program"  # Restore destination directory (current directory)
+SOURCE_DIR="/home/ubuntu/PILOT/scripts"  # Source directory (copy from build_shell)
+TARGET_DIR="/home/ubuntu/PILOT/program"  # Restore destination directory (current directory)
 FILE_NAME="c_build.sh"
 FILE_PATTERN="c_build*.sh"  # Changed to a pattern
 # FILE_PATTERN="BBtargets_*.txt"  # Changed to a pattern

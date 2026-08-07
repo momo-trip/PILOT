@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import sys
 
 from collections import defaultdict, deque
 from typing import Dict, List, NamedTuple, Set, Tuple
@@ -318,9 +319,6 @@ def get_node_metric(G, metrics, node_id):
     name = node_info.get('name', node_id.split('@')[0] if '@' in node_id else node_id)
     
     result = {
-        #'name': name,
-        #'file_path': node_info.get('file_path', ''),
-        #'start_line': node_info.get('start_line', 0),
         'in_degree': metrics['in_degree'].get(node_id, 0.0),
         'out_degree': metrics['out_degree'].get(node_id, 0.0),
         'closeness_centrality': metrics['closeness_centrality'].get(node_id, 0.0),
@@ -584,7 +582,7 @@ def get_bound(meta_dir, file_path, target_function_name, target_line):
             target_function_name == item['name']
             ):
 
-            start_line = item['start_line']
+            _, start_line, _ = parse_def_loc(item['definition']) # start_line = item['start_line']
             end_line = item['end_line']
             break
 
@@ -879,13 +877,13 @@ def find_all_paths(function_data, function_a, function_b):
 
 
 def get_related_main(
-    program_dir, database_json, target_cmd, CURRENT_PATH, 
+    program_dir, database_json, target_cmd, home_dir, 
     work_dir, callee_main_path, callee_path, distance_path, 
     meta_dir, database_dir
 ):
     """Take the main target function, find all functions related to it and the paths from main, compute edge weights and weighted centrality, and write the results out"""
     
-    target_entry = get_main_info(program_dir, database_json, target_cmd, CURRENT_PATH, work_dir, meta_dir, "raw")
+    target_entry = get_main_info(program_dir, database_json, target_cmd, home_dir, work_dir, meta_dir, "raw")
 
     # Collect the dep information of target_entry in advance
     target_path = target_entry['target_path']
@@ -925,13 +923,10 @@ def get_related_main(
             if steps == -1:
                 print("No relationship found between the functions")
             else:
-                # print(f"Relationship type: {rel_type}")
-                # print(f"Steps required: {steps}")
                 print("Path:")
                 for i in range(len(path)-1):
                     print(f"  {path[i]} {directions[i]} {path[i+1]}")
-                    # print(f"Route: {' -> '.join(path)}")
-            
+
         else:
             # This is the main function itself
             #call['dep_degree'] = 0
@@ -946,18 +941,30 @@ def get_related_main(
     write_weighted_centrality(callee_path, callee_main_path, distance_path)
 
 
-def get_main_info(program_dir, database_json, target_cmd, current_path, work_dir, meta_dir, flag=None):
+def get_main_info(program_dir, database_json, target_cmd, home_dir, work_dir, meta_dir, flag=None):
 
     main_path = database_json[target_cmd]["main_path"]
-    main_path = main_path.replace(program_dir, f"{current_path}/{work_dir}")
+    main_path = f"{home_dir}/{main_path}"
+
+    main_path = main_path.replace(program_dir, f"{home_dir}/{work_dir}")
     meta_data, meta_path = get_metadata(os.path.abspath(main_path), meta_dir, None)
 
     print(main_path)
     print(meta_path)
+    line_number = None
     for key, item in meta_data.items():
-        if item['name'] == "main":
-            line_number = item['start_line']
+        if item['kind'] == "function":
+            if item['name'] == "main":
+                line_number = item['start_line']
+                
+        elif 'macro' in item['kind']:
+            if item['expanded_value'] == "main":
+                line_number = item['start_line']
 
+    
+    if line_number is None:
+        raise ValueError(f"Must have {line_number}.")
+        
     target_entry = {
         "target_path" : main_path,
         "target_line" : line_number,

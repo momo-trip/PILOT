@@ -1,0 +1,43 @@
+{
+    "power" : [
+        "avconv_old",
+        "bison_old",
+        "cjpeg_old",
+        "dwarfdump_old",
+        "ffmpeg_old",
+        "gm_old",
+        "gs_old",
+        "jasper_old",
+        "mpg123_old",
+        "nasm_old",
+        "objdump_old",
+        "pspp_old",
+        "readelf_old",
+        "tiff2pdf_old",
+        "tiff2ps_old",
+        "xmllint_old",
+        "xmlwf_old",
+        "yara_old",
+        "cflow_old",
+        "vim_old"
+    ],
+    "all" : [
+        "cmark_old",
+        "editcap_old",
+        "eu-elfclassify_old",
+        "img2sixel_old",
+        "jpegoptim_old",
+        "jpegtran_old",
+        "jq_old",
+        "lrzip_old",
+        "ogg123_old",
+        "openssl-ec_old",
+        "openssl-asn1parse_old",
+        "openssl-rsa_old",
+        "speexdec_old",
+        "tcpprep_old",
+        "tcpreplay_old",
+        "tiffcp_old",
+        "tiffcrop_old"
+    ]
+}

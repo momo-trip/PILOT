@@ -506,8 +506,11 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     if target_cmd.startswith('openssl'):
         config.interval = 120
 
+    base_dir = home_dir.replace("/PILOT", "")
     database_json = read_json(config.database_path)
     original_target_dir = database_json[target_cmd]["dir_name"]
+
+    original_target_dir = f"{home_dir}/{original_target_dir}"
     target = get_last_directory(original_target_dir)
 
     paths = Paths(
@@ -516,7 +519,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
         target=target,
         directory_id=directory_id,
         home_dir=home_dir,
-        macro_parser_dir=config.macro_parser_dir,
+        #macro_parser_dir=f"{base_dir}/{config.macro_parser_dir}",
     )
     
     if config.cent is None:
@@ -601,33 +604,22 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     ommited_files = []
     start_time = time.time()
 
+    if process_type == "gen":
+        atexit.register(partial(get_final_report, paths, 
+            process_type, start_time, target_cmd, target, original_target_dir,
+            config.max_explore_time, config.temperature, config.total_time, config.interval, 
+            config.cent, config.llm_choice, config.llm_model, config.strategy,
+            WO_READ, WO_PATH, WO_VALIDATION        
+        )) 
+
     try:
-        if process_type == "gen":
-            atexit.register(partial(get_final_report, paths, 
-                process_type, start_time, target_cmd, target, original_target_dir,
-                config.max_explore_time, config.temperature, config.total_time, config.interval, 
-                config.cent, config.llm_choice, config.llm_model, config.strategy,
-                WO_READ, WO_PATH, WO_VALIDATION        
-            )) 
-
-        if process_type == "tool":
-            if os.path.exists(paths.chat_dir):
-                delete_directory(paths.chat_dir)
-            create_directory(paths.chat_dir)
-
-            if os.path.exists(paths.tool_dir):
-                delete_directory(paths.tool_dir)
-            create_directory(paths.tool_dir)
-
-            native_tool_configuration(target, target_cmd, paths.target_dir, paths.tool_dir, paths.tool_json_path, llm_interface, config.os_version)
-
-        elif process_type == "prepare":
+        if process_type == "prepare":
             print("Preparing ...")
             executable = True
             executable, main_list = search_main(
                 process_type, target, paths.run_test_path, paths.dep_json_path, paths.build_path, 
                 paths.target_dir, paths.meta_dir, paths.database_dir, ommited_files,
-                paths.macro_finder, paths.div_meta_dir, paths.taken_directive_path, paths.unordered_taken_directive_path,
+                paths.div_meta_dir, paths.taken_directive_path, paths.unordered_taken_directive_path,
                 paths.all_directive_path, paths.is_program_path, paths.all_macros_path, paths.taken_macros_path,
                 paths.guards_path, paths.guarded_macros_path, paths.independent_path, paths.flag_path, paths.const_path, paths.global_path
             ) 
@@ -637,12 +629,15 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             for entry in main_list:
                 def_file_path, def_start_line, _ = parse_def_loc(entry['definition'])
                 base_path = remove_base_path(def_file_path, f"{home_dir}/{paths.target_dir}")
-                main_paths.append(f"{original_target_dir}/{base_path}")
+                main_paths.append({
+                    "path": f"{original_target_dir}/{base_path}",
+                    "start_line": def_start_line,
+                    "end_line": entry['end_line'],
+                })
 
             if len(main_list) > 1:
-                print("-------------")
-                for path in main_paths:
-                    print(path)
+                for item in main_paths:
+                    print(f"{item['path']}:{item['start_line']}-{item['end_line']}")
                 #raise ValueError("Should avoid using as the target because it has two main functions.")
                 print("Should avoid using as the target because it has two main functions.")
             
@@ -651,8 +646,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 print("Should avoid using as the target because it has no main function.")
 
             else:
-                for path in main_paths:
-                    print(path)
+                for item in main_paths:
+                    print(f"{item['path']}:{item['start_line']}-{item['end_line']}")
 
         elif process_type == "preset":
             
@@ -708,21 +703,32 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             copy_file(paths.callee_path, paths.preset_dir)
             copy_file(paths.callee_main_path, paths.preset_dir)
 
+
         elif process_type == "gcno":
             # paths.work_dir comes from afl's directory with gcno
             delete_directory(paths.work_dir)
             copy_directory(original_target_dir, paths.work_dir)
             run_script(process_type, paths.database_dir, paths.build_path, 10000, True, None, "both")
             copy_directory(paths.work_dir, paths.preset_dir)
+        
+
+        elif process_type == "tool":
+            if os.path.exists(paths.chat_dir):
+                delete_directory(paths.chat_dir)
+            create_directory(paths.chat_dir)
+
+            if os.path.exists(paths.tool_dir):
+                delete_directory(paths.tool_dir)
+            create_directory(paths.tool_dir)
+
+            native_tool_configuration(target, target_cmd, paths.target_dir, paths.tool_dir, paths.tool_json_path, llm_interface, config.os_version)
 
 
         elif process_type == "gen":
 
             record_log(paths.log_path)
-
             # func_sum = get_func_sum(paths.callee_main_path)
-            # check_command_availability(paths.tool_json_path, target_cmd, target)
-        
+
             # Set at the start of execution
             set_timeout(
                 config.total_time, start_time, process_type, target_cmd, target, 
@@ -749,7 +755,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             # Write the first testcase
             testfile_counter = ask_basic_command(
-                paths, llm_interface, target_cmd, config.cov_target, config.max_num_test, cent_key, config.max_version_count,
+                paths, llm_interface, target_cmd, 
+                config.cov_target, config.max_num_test, cent_key, config.max_version_count,
                 original_target_dir, database_json, config.max_iterations, tool_string, config.strategy, testfile_counter, WO_VALIDATION
             )
 
@@ -844,7 +851,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             empty_id = export_to_seed_dir(paths.snap_dir, paths.shell_dir, target_cmd)
 
             print(f"\nNext action:")
-            print(f"python3 run.py {target_cmd} set {empty_id}")
+            print(f"python3.12 run.py {target_cmd} set {empty_id}")
 
         elif process_type == "set": # "car_prepare"  # prepare the set directory
 
@@ -928,7 +935,13 @@ if __name__ == "__main__":
     process_type = str(sys.argv[2]) 
 
     directory_id = None
-    if process_type in ["set", "file", "carpet", "zigzag", "afl_argv"]:
+    if process_type in [
+        "set", 
+        "file", 
+        "carpet", 
+        "zigzag", 
+        "afl_argv"
+    ]:
         directory_id = str(sys.argv[3]) 
 
     home_dir = os.path.dirname(os.path.abspath(__file__))
@@ -955,43 +968,23 @@ if __name__ == "__main__":
 
 
 """
-python3 run.py tiffcp_old prepare
-python3 run.py tiffcp_old preset
-python3 run.py tiffcp_old gcno
-python3 run.py tiffcp_old tool
-python3 run.py tiffcp_old gen
+python3.12 run.py tiffcp_old prepare
+python3.12 run.py tiffcp_old preset
+python3.12 run.py tiffcp_old gcno
+python3.12 run.py tiffcp_old tool
+python3.12 run.py tiffcp_old gen
 
-python3 run.py tiffcp_old exp
-python3 run.py tiffcp_old set 000
-python3 run.py tiffcp_old file 000
-python3 run.py tiffcp_old carpet 000
-python3 run.py tiffcp_old zig 000
-python3 run.py tiffcp_old afl_argv 000
+python3.12 run.py tiffcp_old exp
+python3.12 run.py tiffcp_old set 000
+python3.12 run.py tiffcp_old file 000
+python3.12 run.py tiffcp_old carpet 000
+python3.12 run.py tiffcp_old zig 000
+python3.12 run.py tiffcp_old afl_argv 000
 
 
-python3 run.py jpegoptim_old prepare
-python3 run.py eu-elfclassify_old prepare
+python3.12 run.py jpegoptim_old prepare
+python3.12 run.py eu-elfclassify_old prepare
 
-python3 run.py jpegoptim_old tool
-python3 run.py eu-elfclassify_old tool
-"""
-
-"""
-python3 run.py avconv_old prepare
-python3 run.py bison_old prepare
-python3 run.py cjpeg_old prepare
-python3 run.py ffmpeg_old prepare
-python3 run.py gm_old prepare
-
-python3 run.py gs_old prepare
-python3 run.py jasper_old prepare
-python3 run.py mpg123_old prepare
-python3 run.py nasm_old prepare
-python3 run.py objdump_old prepare
-python3 run.py pspp_old prepare
-python3 run.py xmllint_old prepare
-
-python3 run.py xmlwf_old prepare
-python3 run.py yara_old prepare
-python3 run.py vim_old prepare
+python3.12 run.py jpegoptim_old tool
+python3.12 run.py eu-elfclassify_old tool
 """

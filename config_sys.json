@@ -1,7 +1,6 @@
 {
     "user_id": "0000",
     "database_path" : "database.json",
-    "macro_parser_dir": "/root/kiso-parser-macro",
     "max_target_func": 5,
     "total_time": 180000,
     "interval": 30,

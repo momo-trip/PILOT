@@ -72,7 +72,7 @@ def get_compile_commands(process_type, target_dir):
 
 def search_main(process_type, target, run_path, dep_json_path, build_path, 
                 target_dir, meta_dir, database_dir, ommited_files,
-                macro_finder, div_meta_dir, taken_directive_path, unordered_taken_directive_path,
+                div_meta_dir, taken_directive_path, unordered_taken_directive_path,
                 all_directive_path, is_program_path, all_macros_path, taken_macros_path,
                 guards_path, guarded_macros_path, independent_path, flag_path, const_path, global_path):
 
@@ -92,7 +92,7 @@ def search_main(process_type, target, run_path, dep_json_path, build_path,
     analyze_dependencies(target_dir, meta_dir, database_dir, dep_json_path) # Investigate header file inclusion
 
     # analyze_function(target_dir, func_json_path, prot_json_path, meta_dir, is_program_path, False, dep_json_path, build_dir)
-    parse_all("call", target, macro_finder, target_dir, meta_dir, div_meta_dir, database_dir, build_path, 
+    parse_all("call", target, target_dir, meta_dir, div_meta_dir, database_dir, build_path, 
                  taken_directive_path, unordered_taken_directive_path, all_directive_path, dep_json_path, is_program_path, 
                  all_macros_path, taken_macros_path, guards_path, guarded_macros_path, independent_path, flag_path, const_path,
                  None, None, global_path)

@@ -1,11 +1,12 @@
 pilot_lib/h_export.py
 pilot_lib/h_cov.py
-pilot_lib/tool.py
+# pilot_lib/tool.py
 reformat_original.py 
 hd_strategy.json 
 instances.json 
-benchmark.json
+# benchmark.json
 decision_rules.json
+note.txt
 
 #
 __pycache__/
