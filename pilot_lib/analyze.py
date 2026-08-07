@@ -39,8 +39,24 @@ def search_executable(is_program_path, meta_dir):
             continue
 
         for key, item in meta_data.items():
+            """
             if item['name'] == 'main':
                 executable = True
+                main_entry = {}
+                main_entry = item.copy()
+                main_list.append(main_entry)
+            """
+
+            executable = False
+            if item['kind'] == "function":
+                if item['name'] == "main":
+                    executable = True
+
+            elif 'macro' in item['kind']:
+                if 'expanded_value' in item and item['expanded_value'] == "main":
+                    executable = True
+            
+            if executable is True:
                 main_entry = {}
                 main_entry = item.copy()
                 main_list.append(main_entry)

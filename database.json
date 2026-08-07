@@ -1880,7 +1880,7 @@
         ]
     },
     "xmlwf_old": {
-        "main_path": "program/expat-2.4.1/xmlwf/xmlwf.c",
+        "main_path": "program/expat-2.4.1/xmlwf/xmltchar.h",
         "dir_name" : "program/expat-2.4.1",
         "cmd_exe": "xmlwf/xmlwf",
         "notes": [

@@ -855,44 +855,70 @@ def get_branch_coverage(coverage_info_path, target_dir, branch_path, is_program_
     return covered_total, branch_data["coverage_percent"]  #average_coverage #branch_data
 
 
+_UNRESOLVED = {"unknown"}
 
-def parse_function_data(input_string):
-    # Input validation
-    if not input_string or ':::' not in input_string:
-        raise ValueError("Invalid input format. Expected 'function_name:::file_path:::start_line'")
-    
-    # Split the string at ':::'
+def parse_function_data(input_string, allow_empty_name=True):
+    if input_string is None:
+        raise ValueError("Input string is None")
+
     parts = input_string.split(':::')
-    if len(parts) != 3:  # Changed from 2 to 3
-        raise ValueError("Invalid number of parts. Expected exactly two ':::'")
+    if len(parts) != 3:
+        raise ValueError(...)
+        
+    # # Input validation
+    # if not input_string or ':::' not in input_string:
+    #     raise ValueError("Invalid input format. Expected 'function_name:::file_path:::start_line'")
     
+    # # Split the string at ':::'
+    # parts = input_string.split(':::')
+    # if len(parts) != 3:  # Changed from 2 to 3
+    #     # raise ValueError("Invalid number of parts. Expected exactly two ':::'")
+    #     raise ValueError(f"Expected exactly two ':::' separators, got {input_string!r}")
+
     function_name = parts[0].strip()
     file_path = parts[1].strip()
     start_line = parts[2].strip()
     
-    # Validate non-empty parts
-    if not function_name or not file_path or not start_line:
-        raise ValueError("Function name, file path, and start line must be non-empty")
+    # # Validate non-empty parts
+    # if not function_name or not file_path or not start_line:
+    #     raise ValueError("Function name, file path, and start line must be non-empty")
     
+    # if not file_path or not start_line:
+    #     raise ValueError(f"File path and start line must be non-empty, got {input_string!r}")
+    
+    if file_path.lower() in _UNRESOLVED or start_line.lower() in _UNRESOLVED:
+        return function_name, None, None
+
+    if not allow_empty_name and not function_name:
+        raise ValueError(f"Function name must be non-empty, got {input_string!r}")
+        
     # Validate start_line is a number
     try:
         start_line = int(start_line)
     except ValueError:
-        raise ValueError("Start line must be a number")
+        # raise ValueError("Start line must be a number")
+        raise ValueError(f"Start line must be a number, got {input_string!r}") from None
     
     return function_name, file_path, start_line
 
 
-
+"""
 def parse_func_data(input_string):
-    # Input validation
-    if not input_string or ':::' not in input_string:
-        raise ValueError("Invalid input format. Expected 'function_name:::file_path'")
-    
-    # Split the string at ':::'
+    if input_string is None:
+        raise ValueError("Input string is None")
+
     parts = input_string.split(':::')
-    if len(parts) != 2:
-        raise ValueError("Invalid number of parts. Expected exactly one ':::'")
+    if len(parts) != 3:
+        raise ValueError(...)
+        
+    # # Input validation
+    # if not input_string or ':::' not in input_string:
+    #     raise ValueError("Invalid input format. Expected 'function_name:::file_path'")
+    
+    # # Split the string at ':::'
+    # parts = input_string.split(':::')
+    # if len(parts) != 2:
+    #     raise ValueError("Invalid number of parts. Expected exactly one ':::'")
         
     function_name = parts[0].strip()
     file_path = parts[1].strip()
@@ -902,7 +928,7 @@ def parse_func_data(input_string):
         raise ValueError("Both function name and file path must be non-empty")
         
     return function_name, file_path
-
+"""
 
 def get_metadata(c_path, meta_dir, path_flag): # , signal
     is_abs_os_path = os.path.isabs(c_path)

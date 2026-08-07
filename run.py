@@ -39,7 +39,9 @@ from llm_api import (
     AgentInterface,
 )
 
-from c_parser_api import analyze_call_relationship
+from c_parser_api import (
+    analyze_call_relationship
+)
 
 from pilot_lib.utils import (
     Paths,

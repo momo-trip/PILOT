@@ -32,7 +32,7 @@ from pilot_lib.utils import (
 )
 
 
-class FunctionId(NamedTuple): # Information to uniquely identify a function"
+class FunctionId(NamedTuple): # Information to uniquely identify a function
     name: str
     file_path: str
     line_cov: str
@@ -956,12 +956,13 @@ def get_main_info(program_dir, database_json, target_cmd, home_dir, work_dir, me
         if item['kind'] == "function":
             if item['name'] == "main":
                 line_number = item['start_line']
-                
-        elif 'macro' in item['kind']:
-            if item['expanded_value'] == "main":
-                line_number = item['start_line']
+                break
 
-    
+        elif 'macro' in item['kind']:
+            if 'expanded_value' in item and item['expanded_value'] == "main":
+                line_number = item['start_line']
+                break
+
     if line_number is None:
         raise ValueError(f"Must have {line_number}.")
         
@@ -1116,9 +1117,13 @@ def build_call_graph(metadata_files: List[List[Dict]]) -> Tuple[Dict[FunctionId,
     # for file_metadata in metadata_contents:
     #     if file_metadata is None:
     #         continue
+
     for key, func_data in metadata_contents.items():  # Register the calling function as an identifier
+        """
         if func_data['kind'] != "function":
             continue
+        """
+
         call_sites = func_data.get("uses", []) #callees", []) # Record the call relationships
         if func_data["name"] not in all_functions:
             #print(func_data)
@@ -1126,10 +1131,14 @@ def build_call_graph(metadata_files: List[List[Dict]]) -> Tuple[Dict[FunctionId,
             all_functions[f"{func_data["name"]}:::{def_file_path}:::{def_start_line}"] = []
 
         for call in call_sites:
+            
             if 'kind' not in call:
-                continue
+                continue            
+            """
             if call['kind'] != "function":
                 continue
+            """
+
             call_file_path, call_start_line, _ = parse_def_loc(call['definition'])
             all_functions[f"{func_data["name"]}:::{def_file_path}:::{def_start_line}"].append(f"{call['name']}:::{call_file_path}:::{call_start_line}")
 
@@ -1239,13 +1248,16 @@ def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_pat
     for def_string in cflow_sorted_functions:
         print(def_string)
         name, def_file_path, def_start_line = parse_function_data(def_string)
+
+        if def_file_path is None:
+            continue
+            
         reformed_functions.append({
             "name" : name,
             "def_file_path" : def_file_path,
             "def_start_line" : def_start_line,
         })
 
-    
     print("\nTopologically sorted functions:") 
     i = 0
     for func in reformed_functions:
