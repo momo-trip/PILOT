@@ -105,7 +105,9 @@ def search_main(process_type, target, run_path, dep_json_path, build_path,
 
     print(f"{build_dir}/compile_commands.json")
 
-    analyze_dependencies(target_dir, meta_dir, database_dir, dep_json_path) # Investigate header file inclusion
+    analyze_dependencies(
+        target_dir, meta_dir, database_dir, dep_json_path
+    ) # Investigate header file inclusion
 
     # analyze_function(target_dir, func_json_path, prot_json_path, meta_dir, is_program_path, False, dep_json_path, build_dir)
     parse_all("call", target, target_dir, meta_dir, div_meta_dir, database_dir, build_path, 

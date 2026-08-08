@@ -28,6 +28,7 @@ from utils_api import (
     remove_base_path,
     set_log,
     record_log,
+    grant_permissions,
 )
 
 from llm_api import (
@@ -455,6 +456,9 @@ def initialize(paths, original_target_dir):
     reset_directory(paths.snap_dir)
     reset_directory(paths.chat_dir)
     reset_directory(paths.tmp_dir)
+
+    if process_type == "prepare":
+        reset_directory(paths.database_dir)
     
     delete_file(paths.reformed_path)
     delete_file(paths.isolated_path)
@@ -497,6 +501,7 @@ def initialize(paths, original_target_dir):
         
     else:
         copy_directory(original_target_dir, paths.work_dir) 
+        grant_permissions(paths.work_dir)
 
 
 def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
@@ -653,28 +658,6 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
         elif process_type == "preset":
             
-            if target_cmd == "gm_old":
-                json_data = read_json(f"{home_dir}/metadata_gm_old/workspace_gm_old/GraphicsMagick-1.3.36/utilities/gm_c.json")
-                
-                for item in json_data:
-                    for callee_item in item['callees']:
-                        callee_item['def_file_path'] = f"{home_dir}/workspace_gm_old/GraphicsMagick-1.3.36/magick/command.c"
-                        callee_item['def_start_line'] = 17493
-                        callee_item['def_end_line'] = 17505
-
-                write_json(f"{home_dir}/metadata_gm_old/workspace_gm_old/GraphicsMagick-1.3.36/utilities/gm_c.json", json_data)
-
-            elif target_cmd == "gm":
-                json_data = read_json(f"{home_dir}/metadata_gm/workspace_gm/GraphicsMagick-1.3.45/utilities/gm_c.json")
-                
-                for item in json_data:
-                    for callee_item in item['callees']:
-                        callee_item['def_file_path'] = f"{home_dir}/workspace_gm/GraphicsMagick-1.3.45/magick/command.c"
-                        callee_item['def_start_line'] = 17757
-                        callee_item['def_end_line'] = 17769
-
-                write_json(f"{home_dir}/metadata_gm/workspace_gm/GraphicsMagick-1.3.45/utilities/gm_c.json", json_data)
-
             # get dependencies
             analyze_call_dependencies(
                 paths.target_dir, paths.meta_dir, paths.database_dir, paths.is_program_path, paths.reformed_path, paths.isolated_path

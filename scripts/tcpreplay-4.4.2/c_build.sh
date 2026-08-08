@@ -1,10 +1,10 @@
 #!/bin/bash
 
-make distclean
-#export CC=afl-gcc
+make clean
+
+# export CC=clang
 export CFLAGS="-fprofile-arcs -ftest-coverage"
 export LDFLAGS="-lgcov --coverage"
  
-autoreconf -fiv
-./configure
-bear -- make
+./configure 
+bear -- make -j"$(nproc)"

@@ -6,4 +6,4 @@ export LDFLAGS="-lgcov --coverage"
 
 ./autogen.sh
 ./configure --disable-shared --enable-static
-bear -- make
+bear -- make -j"$(nproc)"

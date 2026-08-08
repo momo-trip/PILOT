@@ -7,4 +7,4 @@ export LDFLAGS="-lgcov --coverage"
 
 ./autogen.sh
 ./configure
-bear -- make
+bear -- make -j"$(nproc)"

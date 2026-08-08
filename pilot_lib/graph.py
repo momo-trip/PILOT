@@ -773,7 +773,7 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
         
         # Queue size limit
         if len(queue) > MAX_QUEUE_SIZE:
-            print(f"Queue size limit exceeded ({MAX_QUEUE_SIZE}), trimming...")
+            # print(f"Queue size limit exceeded ({MAX_QUEUE_SIZE}), trimming...")
             # Reduce the queue by half (prioritize shorter paths)
             temp_queue = list(queue)
             temp_queue.sort(key=lambda x: len(x[1]))  # Sort by path length
@@ -969,7 +969,7 @@ def get_main_info(program_dir, database_json, target_cmd, home_dir, work_dir, me
     target_entry = {
         "target_path" : main_path,
         "target_line" : line_number,
-        "target_function" : "main"
+        "target_function" : item['name']  #"main"
     }
 
     print(target_entry)
@@ -1126,12 +1126,10 @@ def build_call_graph(metadata_files: List[List[Dict]]) -> Tuple[Dict[FunctionId,
 
         call_sites = func_data.get("uses", []) #callees", []) # Record the call relationships
         if func_data["name"] not in all_functions:
-            #print(func_data)
             def_file_path, def_start_line, _ = parse_def_loc(func_data['definition'])
             all_functions[f"{func_data["name"]}:::{def_file_path}:::{def_start_line}"] = []
 
         for call in call_sites:
-            
             if 'kind' not in call:
                 continue            
             """
@@ -1213,8 +1211,8 @@ def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_pat
     target_paths = []
     parent_paths = []
     program_files = set(read_json(is_program_path))
-    print(program_files)
 
+    """
     for root, _, files in os.walk(target_dir):
         for file in files:
             if file.endswith('.c') or file.endswith('.h'):
@@ -1223,7 +1221,6 @@ def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_pat
                 elif file.endswith('.h'):
                     suffix = "_h"
                 file_path = os.path.join(root, file)
-                print(file_path)
                 meta_path = get_metadata(file_path, meta_dir, True) #meta_dir + "/" + file_path[:-2] + suffix + ".json"
 
                 abs_path = os.path.abspath(file_path)
@@ -1231,7 +1228,13 @@ def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_pat
                     metadata_files.append(meta_path)
 
                 target_paths.append(file_path)
+    """
 
+    for file_path in program_files:
+        abs_path = os.path.abspath(file_path)
+        if abs_path in program_files:
+            meta_path = get_metadata(file_path, meta_dir, True) #meta_dir + "/" + file_path[:-2] + suffix + ".json"
+            metadata_files.append(meta_path)
 
     graph, all_functions = build_call_graph(metadata_files) 
 
@@ -1242,11 +1245,9 @@ def analyze_call_dependencies(target_dir, meta_dir, database_dir, is_program_pat
 
     #cflow_sorted_functions = topological_cflow_sort(graph)
     write_json(f"{database_dir}/functions_cflow.json", cflow_sorted_functions)
-    print(isolated_nodes)
 
     reformed_functions = []
     for def_string in cflow_sorted_functions:
-        print(def_string)
         name, def_file_path, def_start_line = parse_function_data(def_string)
 
         if def_file_path is None:

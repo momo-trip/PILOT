@@ -7,5 +7,4 @@ export LDFLAGS="-lgcov --coverage"
  
 
 ./configure --disable-shared --enable-static
-
-make
+bear -- make -j"$(nproc)"

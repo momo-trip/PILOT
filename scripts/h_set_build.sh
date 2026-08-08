@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script configuration
-SOURCE_DIR="/home/ubuntu/PILOT/scripts"  # Source directory (copy from build_shell)
-TARGET_DIR="/home/ubuntu/PILOT/program"  # Restore destination directory (current directory)
+SOURCE_DIR="/home/ubuntu/PILOT/program" #scripts"  # Source directory (copy from build_shell)
+TARGET_DIR="/home/ubuntu/PILOT/scripts" #program"  # Restore destination directory (current directory)
 FILE_NAME="c_build.sh"
 FILE_PATTERN="c_build*.sh"  # Changed to a pattern
 # FILE_PATTERN="BBtargets_*.txt"  # Changed to a pattern
@@ -29,6 +29,7 @@ find "$SOURCE_DIR" -name "$FILE_PATTERN" -type f | while read -r filepath; do
     dest_dir=$(dirname "$dest_path")
     # **Added: check whether the destination directory exists**
     if [ ! -d "$dest_dir" ]; then
+        # mkdir -p "$dest_dir"
         echo "Skipped (destination directory does not exist): $dest_dir"
         #echo "  - Would restore: $filepath -> $dest_path"
         continue

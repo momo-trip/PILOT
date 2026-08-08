@@ -2,12 +2,11 @@
 
 rm -rf build
 
+# export CC=clang
 export CFLAGS="-fprofile-arcs -ftest-coverage"
 export LDFLAGS="-lgcov --coverage"
  
-#export CC=afl-gcc-fast
-
 mkdir build
 cd build
-cmake ..
-make 
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
+bear -- make -j"$(nproc)" 

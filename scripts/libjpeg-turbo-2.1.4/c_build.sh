@@ -17,3 +17,4 @@ cmake .. \
     -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS"
 
 make -j$(nproc)
+# bear -- make -j$(nproc)

@@ -9,4 +9,4 @@ export LDFLAGS="-lgcov --coverage"
 make configure
 ./configure 
 
-bear -- make
+bear -- make -j"$(nproc)"

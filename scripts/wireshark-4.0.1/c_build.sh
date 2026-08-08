@@ -12,6 +12,7 @@ export LDFLAGS="-lgcov --coverage"
 mkdir build
 cd build
 cmake \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DBUILD_wireshark=OFF \
     -DENABLE_TSHARK=ON \
     -DDISABLE_WERROR=ON \
@@ -19,5 +20,5 @@ cmake \
     -DENABLE_PLUGINS=OFF \
     ..
 
-
-bear -- make -j$(nproc)
+make -j$(nproc)
+# bear -- make -j$(nproc)

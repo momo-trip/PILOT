@@ -39,6 +39,7 @@ set/
 seed_tmp/
 
 program/*
+/scripts_original/
 
 tmp*.json
 **/.cargo/registry/
