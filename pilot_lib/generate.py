@@ -916,6 +916,10 @@ def repair_test_llm(ctx):
     while (1):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
+        
+        # if ctx.explore_time is not None and elapsed_time > ctx.explore_time:
+        #     print(f"[budget] explore_time exceeded: {elapsed_time:.0f}s > {ctx.explore_time}s")
+        #     break
 
         if version_count > ctx.max_version_count:
             break
@@ -1631,6 +1635,10 @@ def repair_test_agent(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
+        if ctx.explore_time is not None and elapsed_time > ctx.explore_time:
+            print(f"[budget] explore_time exceeded: {elapsed_time:.0f}s > {ctx.explore_time}s")
+            break
+
         if version_count > ctx.max_version_count:
             break
 
@@ -1744,6 +1752,8 @@ def repair_test_agent(ctx):
                             ]
                     prompt.extend(["", "## Response rules:",
                                 f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
+                                f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\", where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                                f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\".",
                                 f"- Consider methods to execute the specified function by manipulating the arguments of the main function (command line arguments).",
                                 f"- The {pure_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
                                 f"- Please ensure all commands are written in complete form beginning with `./{ctx.cmd_exe}`. Do not use variables or aliases - write directly executable command lines.",
@@ -2667,6 +2677,10 @@ def repair_branch_llm(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
+        # if ctx.explore_time is not None and elapsed_time > ctx.explore_time:
+        #     print(f"[budget] explore_time exceeded: {elapsed_time:.0f}s > {ctx.explore_time}s")
+        #     break
+
         if version_count > ctx.max_version_count:
             break
 
@@ -3317,6 +3331,10 @@ def repair_branch_agent(ctx):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
 
+        if ctx.explore_time is not None and elapsed_time > ctx.explore_time:
+            print(f"[budget] explore_time exceeded: {elapsed_time:.0f}s > {ctx.explore_time}s")
+            break
+
         if version_count > ctx.max_version_count:
             break
 
@@ -3346,6 +3364,7 @@ def repair_branch_agent(ctx):
                     f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                     f"- Please set as many options as possible in a single command to explore more execution paths.",
                     f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                    f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                     f"{tool_cmd}",
                     f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                     f"- Please do not include commands that delete input files in the shell script.",
@@ -3362,6 +3381,8 @@ def repair_branch_agent(ctx):
                 ]
                 prompt.extend(["", "## Response rules:",
                     f"- Your task is only to generate {ctx.paths.run_test_path}. Do NOT execute or verify the generated script under any circumstances. Verifying whether the script actually reaches the target is out of scope for this task and will be handled by a separate process.",
+                    f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\", where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                    f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\".",
                     f"- Consider methods to execute the specified line by manipulating the arguments of the main function (command line arguments).",
                     f"- Even if the program implements other commands, please write test cases only for the {ctx.target_cmd} command for now.",
                     f"- The {ctx.target_cmd} command can be executed in the code with ./{ctx.cmd_exe}.",
@@ -3392,6 +3413,7 @@ def repair_branch_agent(ctx):
                     f"- Please do not use compilation-related commands (gcc, cc, make, etc.) in the shell code in {ctx.paths.run_test_path}, and execute the {target_statement} using only existing binaries.",
                     f"- Since we plan to iteratively modify to increase coverage, please write {ctx.paths.run_test_path} to complete execution within approximately 30 seconds.",
                     f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                    f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                     f"{tool_cmd}",
                     f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                     f"- Please do not include commands that delete input files in the shell script.",
@@ -3407,6 +3429,7 @@ def repair_branch_agent(ctx):
                     f"Please modify the test case {ctx.paths.run_test_path} to increase coverage for the program.",
                     f"- Please set as many options as possible in a single command to explore more execution paths.",
                     f"- Please make each input file that each command uses have a different name to ensure uniqueness, using the format \"input{{counter}}.{{suffix}}\" (like input0.txt, input1.txt ...), where {{counter}} is a number {ctx.testfile_counter} or greater.",
+                    f"- After writing the test script, write a JSON file at {ctx.paths.info_path} containing the highest input file counter you used, as the root-level key \"max_counter\". For example, if you created input0, input1, and input2, write: {{\"max_counter\": 2}}.",
                     f"{tool_cmd}",
                     f"- Please avoid placing input files in any directory, like test_data/inputfile.",
                     f"- Please do not include commands that delete input files in the shell script.",

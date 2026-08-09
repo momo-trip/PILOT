@@ -35,15 +35,15 @@ PILOT/
 - **Operating system**: Ubuntu 20.04 or later (recommended)
 
 ### Note:
-- Sandboxed environment setup: Docker configurations are not provided with this code. Please set up your own sandboxed environment and deploy this repository within it.
+<!-- - Sandboxed environment setup: Docker configurations are not provided with this code. Please set up your own sandboxed environment and deploy this repository within it. -->
 - Seed generation uses the environment specified above, while each fuzzer (mutator) requires its own separate environment. Please follow the respective mutator's guidelines for setting up the fuzzing execution environment.
 
 ### Installation
 
-#### 0. Get the Docker image
+#### 1. Get the Docker image
 TBA
 
-#### 1. Clone the repository
+<!-- #### 1. Clone the repository
 
 ```bash
 git clone https://github.com/momo-trip/PILOT.git
@@ -58,22 +58,16 @@ pip install -r requirements.txt
 Required packages include:
 - `libclang` (for C code parsing)
 - `networkx` (for call graph analysis)
-- `anthropic` or `openai` (for LLM API)
+- `anthropic` or `openai` (for LLM API) -->
 
 
-#### 3. Prepare the target program
+#### 2. Prepare the target program
 ```bash
-cd PILOT/program/target
+cd PILOT/program
 git clone {target_program_repository}
 cd {program_name}
 touch c_build.sh
 # Edit c_build.sh to generate compile_commands.json (e.g., using bear)
-
-cd PILOT/program/target_cov
-git clone {target_program_repository}
-cd {program_name}
-touch c_build.sh
-# Edit c_build.sh with gcov flags to generate .gcno files
 ```
 See [program/README.md](program/README.md) for detailed instructions on downloading and building target programs.
 

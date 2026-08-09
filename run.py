@@ -227,7 +227,7 @@ def get_basic_report(
         total_cost = total_in * 0.0000050 + total_out * 0.0000150
     total_cost_jpy = total_cost * USD_TO_JPY
 
-    print(f"\nTotal cost: {total_cost:.6f} USD, {total_cost_jpy:.2f} JPY\n")
+    print(f"\nTotal cost: {total_cost:.6f} USD\n") # , {total_cost_jpy:.2f} JPY\n")
 
     current_directory = os.getcwd()
 
@@ -282,7 +282,7 @@ def stop_periodic_server():
 
 
 def set_timeout(
-    seconds, start_time, process_type, target_cmd, target, 
+    paths, seconds, start_time, process_type, target_cmd, target, 
     target_dir, original_target_dir, archive_dir, meta_dir, 
     result_path, dep_json_path, logging_path,
     max_explore_time, temperature, total_time, interval, 
@@ -295,14 +295,10 @@ def set_timeout(
         stop_periodic_server()  # Stop the periodic thread
 
         get_final_report(
-            process_type, start_time, 
-            target_dir, original_target_dir, archive_dir, 
-            result_path, dep_json_path, meta_dir, logging_path, target_cmd, target,
+            paths, process_type, start_time, target_cmd, target, original_target_dir,
             max_explore_time, temperature, total_time, interval, 
             cent, llm_choice, llm_model, strategy,
-            chat_dir, snap_dir, WO_READ, WO_PATH, WO_VALIDATION, 
-            cov_report_path, select_path, database_dir, token_path,
-            config_data
+            WO_READ, WO_PATH, WO_VALIDATION
         )
         os._exit(1)  # Terminate the entire process
 
@@ -591,7 +587,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                 # f"Write({work_dir_abs}/**)",
             ],
             add_dirs=[database_dir_abs], 
-            max_turns=50,
+            max_turns=20, # 50,
             permission_mode="bypassPermissions",
             session_path=paths.session_path,
             database_dir=paths.database_dir,
@@ -716,7 +712,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             # Set at the start of execution
             set_timeout(
-                config.total_time, start_time, process_type, target_cmd, target, 
+                paths, config.total_time, start_time, process_type, target_cmd, target, 
                 paths.target_dir, original_target_dir, paths.archive_dir, paths.meta_dir, 
                 paths.result_path, paths.dep_json_path, paths.logging_path,
                 config.max_explore_time, config.temperature, config.total_time, config.interval, 
@@ -802,6 +798,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                             msg = str(e)
                             if "flagged this message for a cybersecurity topic" in msg or "Claude Code returned an error result" in msg:
                                 logging.warning(f"Cyber safeguard flagged target {target_cmd}, skipping")
+                                counter["value"] += 1
+                                cycle += 1
                                 continue
                             raise
 
@@ -809,6 +807,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                     msg = str(e)
                     if "flagged this message for a cybersecurity topic" in msg or "Claude Code returned an error result" in msg:
                         logging.warning(f"Cyber safeguard flagged target {target_cmd}, skipping")
+                        counter["value"] += 1
+                        cycle += 1
                         continue
                     raise
 
