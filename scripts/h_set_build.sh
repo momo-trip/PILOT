@@ -36,7 +36,7 @@ find "$SOURCE_DIR" -name "$FILE_PATTERN" -type f | while read -r filepath; do
     fi
     # # Copy (restore) the file
     # # mkdir -p "$dest_dir"
-    cp "$filepath" "$dest_path"
+    # cp "$filepath" "$dest_path"
     
     echo "Restored: $filepath -> $dest_path"
 done

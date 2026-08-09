@@ -137,6 +137,19 @@ def is_empty_string(file_code):
     return False
 
     
+def get_testfile_counter(ctx):
+    """Determine the next input file counter to use, based on info.json.
+    Falls back to ctx.testfile_counter when info.json is unavailable."""
+    current_max_counter = ctx.testfile_counter
+    if os.path.exists(ctx.paths.info_path):
+        info_data = read_json(ctx.paths.info_path)
+        if info_data is None or 'max_counter' not in info_data:
+            current_max_counter = 0
+        else:
+            current_max_counter = info_data['max_counter'] + 1
+    return current_max_counter
+
+
 
 basic_template = f"""
 {{
@@ -289,8 +302,6 @@ def ask_basic_command_llm(ctx):
     
         prompt = []
         count += 1
-
-    print("============= answer =============")
 
     error = None
     std_out = None
@@ -458,18 +469,7 @@ def ask_basic_command_llm(ctx):
     write_testcase(ctx.paths.run_test_path, ctx.paths.snap_dir, timestamp)
     print("============= answer =============")
 
-
-def get_testfile_counter(ctx):
-    """Determine the next input file counter to use, based on info.json.
-    Falls back to ctx.testfile_counter when info.json is unavailable."""
-    current_max_counter = ctx.testfile_counter
-    if os.path.exists(ctx.paths.info_path):
-        info_data = read_json(ctx.paths.info_path)
-        if info_data is None or 'max_counter' not in info_data:
-            current_max_counter = 0
-        else:
-            current_max_counter = info_data['max_counter'] + 1
-    return current_max_counter
+    return get_testfile_counter(ctx)
 
 
 def ask_basic_command_agent(ctx):
@@ -856,6 +856,8 @@ def repair_test_llm(ctx):
     original_run_test_path = None
     explore_count = 0 
 
+    current_max_counter = ctx.testfile_counter
+
     delete_file(ctx.paths.run_test_path)
     delete_file(ctx.paths.info_path)
     create_permissioned_file(ctx.paths.run_test_path)
@@ -931,7 +933,8 @@ def repair_test_llm(ctx):
                     break
 
                 version_count += 1
-                print(f"\nJudge at {ctx.entry}: {is_increased}")
+                # print(f"\nJudge at {ctx.entry}: {is_increased}")
+                print(f"\nJudge at {ctx.entry['target_function']}: is_covered={is_covered}, is_increased={is_increased}")
 
                 save_coverage_report(
                     ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, current_coverage, line_coverage, function_coverage, "llm"
@@ -1519,7 +1522,8 @@ def repair_test_llm(ctx):
                     ctx.execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
                 )
                 execute_out = run_script_pty(ctx.paths.run_test_path)
-
+        
+        current_max_counter = get_testfile_counter(ctx) 
         ctx.repair_count += 1
 
     llm_end_time = time.time()
@@ -1642,7 +1646,8 @@ def repair_test_agent(ctx):
                 break
 
             version_count += 1
-            print(f"\nJudge at {ctx.entry}: {is_increased}")
+            # print(f"\nJudge at {ctx.entry}: {is_increased}")
+            print(f"\nJudge at {ctx.entry['target_function']}: is_covered={is_covered}, is_increased={is_increased}")
 
             save_coverage_report(
                 ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, current_coverage, line_coverage, function_coverage, "llm"
@@ -1749,6 +1754,15 @@ def repair_test_agent(ctx):
                                 f"- Please do not include build execution (./{ctx.paths.build_path}) in the shell code in {ctx.paths.run_test_path}.",
                                 ])
                     prompt.extend(ctx.notes)
+        
+        # added
+        # run_test_path is deleted at the start of this function, so the agent
+        # cannot read it back. Feed the previous round's snapshot instead,
+        # otherwise every round rediscovers the same environment constraints.
+        if original_run_test_path is not None:
+            prompt.extend(["", "## Test script generated in the previous round:"])
+            prompt.extend([read_file(original_run_test_path)])
+        # ended
 
         # feedback of the previous execution result (mirrors the original error / std_out injection)
         if error is not None and error is not True:
@@ -1904,6 +1918,11 @@ def get_pure_target(
     """
 
     for key, item in data.items():
+        if 'kind' not in item:
+            continue
+        if item['kind'] != 'function':
+            continue
+
         if key not in related_ids:
             continue
         
@@ -2005,19 +2024,31 @@ def update_select(select_path, target_data):
 
 def gen_priority(
     target_cmd, meta_dir, database_dir, 
-    priority_path, function_path, callee_path, callee_main_path
+    priority_path, function_path, callee_path, callee_main_path, is_program_path
 ):  
     cov_data = read_json(function_path)
     related_ids = get_related_data(callee_main_path)
     callee_data = read_json(callee_main_path)
 
+    kind_map = read_json(callee_path) or {}
+    program_files = set(read_json(is_program_path))
+
     covered = set()
+    measurable = set()
+
     if cov_data is not None:
         for file_path, item in cov_data['files'].items():
             for func_item in item['functions']:
+                # if func_item['called'] is True:
+
+                def_start_line, def_end_line = get_start_line(target_cmd, func_item['name'], file_path, func_item['line_number'], meta_dir)
+                if def_start_line is None:
+                    continue
+
+                key = f"{func_item['name']}@{file_path}:{def_start_line}"
+                # covered.add(key)
+                measurable.add(key)
                 if func_item['called'] is True:
-                    def_start_line, def_end_line = get_start_line(target_cmd, func_item['name'], file_path, func_item['line_number'], meta_dir)
-                    key = f"{func_item['name']}@{file_path}:{def_start_line}"
                     covered.add(key)
 
     new_callee_data = []
@@ -2039,8 +2070,11 @@ def gen_priority(
     if cov_data is not None:
         for file_path, item in cov_data['files'].items():
             for func_item in item['functions']:
+
+                """
                 if func_item['name'] == "main":
                     continue
+                """
 
                 if func_item['called'] is True:
                     continue
@@ -2053,7 +2087,12 @@ def gen_priority(
                 if key not in related_ids:
                     continue
 
-                #metric = get_node_metric(G, metrics, key)
+                if kind_map.get(key, {}).get('kind') != 'function':
+                    continue
+                if is_system_file(file_path, program_files) is True:
+                    continue
+
+                # metric = get_node_metric(G, metrics, key)
                 metric = get_function_centrality(key, metrics)
 
                 insert = {
@@ -2068,27 +2107,38 @@ def gen_priority(
                     "func_end_line": def_end_line,
                 }
 
-                for key, value in metric.items():
-                    insert[key] = value
+                # for key, value in metric.items():
+                #     insert[key] = value
+                
+                for mk, mv in metric.items():
+                    insert[mk] = mv
 
                 summary.append(insert)
                 seen.add(key)
 
 
-    for item in callee_data:
+    for item in new_callee_data:  # for item in callee_data:
         if item['start_line'] is None:
             continue
 
+        if kind_map.get(item['function_id'], {}).get('kind') != 'function':
+            continue
+        if is_system_file(item['file_path'], program_files) is True:
+            continue
+
         end_line = item['end_line']
+        key = item['function_id']
+
         if end_line is None:
             end_line = item['start_line']
-
         """
         if item['end_line'] is None:
             continue
         """
 
-        key = item['function_id']
+        if key not in measurable:
+            continue
+
         if key not in seen:
             insert = {
                     "function_id" : key,
@@ -2103,11 +2153,16 @@ def gen_priority(
                 }
 
             metric = get_function_centrality(key, metrics)
-            for key, value in metric.items():
-                insert[key] = value
+
+            # for key, value in metric.items():
+            #     insert[key] = value
+
+            for mk, mv in metric.items():
+                insert[mk] = mv
 
             summary.append(insert)
-
+    
+    print(f"summary: {len(summary)}, measurable: {len(measurable)}, covered: {len(covered)}")
     write_json(priority_path, summary)
     return summary
 
@@ -2138,7 +2193,7 @@ def use_metrics(
     summary = sorted(summary, key=lambda x: (-x.get('uncovered_ratio', 0), -x.get(cent_key, 0)))
     write_json(priority_path, summary)
 
-    for i in range(0, len(summary)-1):
+    for i in range(len(summary)):  # for i in range(0, len(summary)-1):
         function_id = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
         if function_id not in related_list:
             summary[i]['surround'] = False
@@ -2148,7 +2203,7 @@ def use_metrics(
     write_json(priority_path, summary)
 
     target_entry = {}
-    for i in range(0, len(summary)-1):
+    for i in range(len(summary)):  # for i in range(0, len(summary)-1):
         function_id = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"  #func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
 
         if 'line_number' in summary[i]:
@@ -2157,13 +2212,14 @@ def use_metrics(
             func_key = f"{summary[i]['name']}@{summary[i]['file_path']}:{summary[i]['func_start_line']}"
 
         if func_key not in targeted_set:
-            target_entry['target_line'] = summary[i]['line_number']  # find_first_uncovered_line(target_entry, line_path)
-            target_entry['target_end_line'] = summary[i]['func_end_line'] 
-            target_entry['target_path'] = summary[i]['file_path']
-            target_entry['target_function'] = summary[i]['name']
-            target_entry['target_branch'] = summary[i]['branch']
+            target_entry['target_line']            = summary[i]['line_number']  # find_first_uncovered_line(target_entry, line_path)
+            target_entry['target_end_line']        = summary[i]['func_end_line'] 
+            target_entry['target_path']            = summary[i]['file_path']
+            target_entry['target_function']        = summary[i]['name']
+            target_entry['target_branch']          = summary[i]['branch']
             target_entry['target_uncovered_ratio'] = summary[i]['uncovered_ratio']
-            target_entry['target_uncovered_ratio'] = summary[i][cent_key]
+            # target_entry['target_uncovered_ratio'] = summary[i][cent_key]
+            target_entry['target_centrality']      = summary[i][cent_key]
 
             targeted_set.add(func_key)
             break
@@ -2275,7 +2331,7 @@ def get_target_entry(
 
     summary = gen_priority(
         target_cmd, meta_dir, database_dir,
-        priority_path, function_path, callee_path, callee_main_path
+        priority_path, function_path, callee_path, callee_main_path, is_program_path
     ) 
 
     if len(summary) == 0:
@@ -2561,6 +2617,8 @@ def repair_branch_llm(ctx):
     min_length = None
     max_length = None
 
+    current_max_counter = ctx.testfile_counter
+
     if not (ctx.WO_READ):
         mode_statement = "Only one mode out of three" #"Only one mode from three modes" # "Only one mode out of three"
     elif ctx.WO_READ:
@@ -2621,7 +2679,9 @@ def repair_branch_llm(ctx):
                 )
                 version_count += 1
 
-                print(f"\nJudge at {ctx.entry}: {is_increased}")
+                # print(f"\nJudge at {ctx.entry}: {is_increased}")
+                print(f"\nJudge at {ctx.entry['target_function']}: is_covered={is_covered}, is_increased={is_increased}")
+
                 save_coverage_report(
                     ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, 
                     current_branch_coverage, line_coverage, function_coverage, "llm"
@@ -3171,7 +3231,8 @@ def repair_branch_llm(ctx):
                     ctx.execute_path, 10, True, None, "both", None, ctx.repair_count, ctx.max_iterations, ctx.paths.log_dir, mode
                 )
                 execute_out = run_script_pty(ctx.paths.run_test_path)
-            
+        
+        current_max_counter = get_testfile_counter(ctx) 
         ctx.repair_count += 1 
 
     llm_end_time = time.time()
@@ -3405,7 +3466,9 @@ def repair_branch_agent(ctx):
             )
 
             version_count += 1
-            print(f"\nJudge at {ctx.entry}: {is_increased}")
+            # print(f"\nJudge at {ctx.entry}: {is_increased}")
+            print(f"\nJudge at {ctx.entry['target_function']}: is_covered={is_covered}, is_increased={is_increased}")
+
             save_coverage_report(
                 ctx.cov_target, ctx.paths.cov_report_path, ctx.paths.token_path, 
                 current_branch_coverage, line_coverage, function_coverage, "llm"

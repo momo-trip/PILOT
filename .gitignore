@@ -7,8 +7,9 @@ instances.json
 # benchmark.json
 decision_rules.json
 note.txt
-
+patch_kind.py
 #
+
 __pycache__/
 *.py[cod]
 

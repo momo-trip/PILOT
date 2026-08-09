@@ -449,7 +449,7 @@ def get_strategies(strategy, cent):
     return cent_key, WO_READ, WO_PATH, WO_VALIDATION
 
 
-def initialize(paths, original_target_dir):
+def initialize(process_type, paths, original_target_dir):
 
     reset_directory(paths.meta_dir)
     reset_directory(paths.work_dir)
@@ -510,7 +510,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
     ###### Setup
     #######################################################
 
-    if target_cmd.startswith('openssl'):
+    if 'openssl' in target_cmd:
         config.interval = 120
 
     base_dir = home_dir.replace("/PILOT", "")
@@ -601,7 +601,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
         )
     
     if process_type in ["prepare", "gen"]: #"preset", "gcno", "exp", "set", "file", "carpet", "zigzag", "afl_argv"]:
-        initialize(paths, original_target_dir)
+        initialize(process_type, paths, original_target_dir)
 
     # Start
     print(f"\n=============== Start of {process_type} ===============\n\n")

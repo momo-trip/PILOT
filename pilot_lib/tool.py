@@ -444,7 +444,14 @@ def native_tool_configuration(target, target_cmd, target_dir, tool_dir, tool_jso
         # that never appears on PATH (e.g. a locally built target) will not
         # be fixed by retrying apt.
         if set(missing) == prev_missing:
-            raise RuntimeError(f"install made no progress: {missing}")
+            # raise RuntimeError(f"install made no progress: {missing}")
+            raise RuntimeError(
+                f"could not install {', '.join(sorted(missing))} on {os_version}. "
+                f"No installation candidate is available. "
+                f"Remove it from {tool_json_path} and rerun, "
+                f"or install it manually."
+            )
+
         prev_missing = set(missing)
         install_tools(tool_json_path, only=missing)
 

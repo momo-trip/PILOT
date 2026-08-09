@@ -589,9 +589,19 @@ def get_bound(meta_dir, file_path, target_function_name, target_line):
     return start_line, end_line
 
 
+def build_caller_index(function_data):
+    """Map cur -> [func_id, ...] such that cur appears in function_data[func_id]["callers"].
+    Iterating function_data in its original order reproduces the push order of the
+    inner full scan this replaces; dict.fromkeys reproduces its membership-test
+    semantics (a duplicated caller entry appended func_id only once)."""
+    index = defaultdict(list)
+    for func_id, func_info in function_data.items():
+        for caller in dict.fromkeys(func_info.get("callers", [])):
+            index[caller].append(func_id)
+    return index
 
 
-def find_function_relationship_bidirectional(function_data, function_a, function_b):
+def find_function_relationship_bidirectional(function_data, function_a, function_b, caller_index=None):
     """
     Calculate the number of steps needed to reach from function_a to function_b
     using both caller and callee relationships in the given function_data.
@@ -624,14 +634,22 @@ def find_function_relationship_bidirectional(function_data, function_a, function
     if function_a == function_b:
         return 0, [get_function_name(function_a)], []
     
+    # added
+    # Built here only when no caller passed one in, so existing call sites keep working.
+    if caller_index is None:
+        caller_index = build_caller_index(function_data)
+
     # BFS to find the shortest path
     visited = set()
     # (function_id, steps, path, direction)
-    queue = [(function_a, 0, [function_a], [])]
-    
+    # queue = [(function_a, 0, [function_a], [])]
+    queue = deque([(function_a, 0, [function_a], [])]) 
+    # ended
+
     while queue:
-        current_func_id, steps, path, directions = queue.pop(0)
-        
+        # current_func_id, steps, path, directions = queue.pop(0)
+        current_func_id, steps, path, directions = queue.popleft() 
+
         if current_func_id in visited:
             continue
         
@@ -652,16 +670,23 @@ def find_function_relationship_bidirectional(function_data, function_a, function
                 queue.append((callee, steps + 1, path + [callee], directions + ["calls"]))
         
         # And callers (functions that call the current function)
+        # Same edges and same order as the former full scan over function_data.items().
+        for func_id in caller_index.get(current_func_id, ()):
+            if func_id not in visited:
+                queue.append((func_id, steps + 1, path + [func_id], directions + ["called_by"]))
+        
+        """
         for func_id, func_info in function_data.items():
             callers = func_info.get("callers", [])
             if current_func_id in callers and func_id not in visited:
                 queue.append((func_id, steps + 1, path + [func_id], directions + ["called_by"]))
-    
+        """
+
     # If we've exhausted the search without finding B
     return -1, [], []
 
 
-def find_shortest_path(function_data, function_a, function_b):
+def find_shortest_path(function_data, function_a, function_b, caller_index=None):
     """
     Finds the shortest path between function_a and function_b regardless of direction.
     
@@ -691,14 +716,17 @@ def find_shortest_path(function_data, function_a, function_b):
         name = function_data[function_a].get("name", function_a)
         return 0, [name], [], "same"
 
+    if caller_index is None:
+        caller_index = build_caller_index(function_data)
+
     # Check A to B direction
     steps_a_to_b, path_a_to_b, directions_a_to_b = find_function_relationship_bidirectional(
-        function_data, function_a, function_b
+        function_data, function_a, function_b, caller_index
     )
     
     # Check B to A direction
     steps_b_to_a, path_b_to_a, directions_b_to_a = find_function_relationship_bidirectional(
-        function_data, function_b, function_a
+        function_data, function_b, function_a, caller_index
     )
     
     # Determine the relationship type and return the shortest path
@@ -722,7 +750,7 @@ def find_shortest_path(function_data, function_a, function_b):
 
 
 
-def find_all_paths_one_direction(function_data, start, target, max_paths=10):  # Restrict even more strictly
+def find_all_paths_one_direction(function_data, start, target, max_paths=10, reachable=None):  # Restrict even more strictly
     """
     Ultra safe BFS version with strict limits to prevent memory issues
     """
@@ -730,6 +758,12 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
     print(f"\nStarting BFS: {start} -> {target}")
     start_time = time.time()
     
+    # Target is outside the forward closure of start, so no path can exist.
+    # Without this, the loop below burns MAX_ITERATIONS (or the 30s timeout)
+    # before returning the very same empty result.
+    if reachable is not None and target not in reachable:
+        return [], []
+
     all_paths = []
     queue = deque()
     
@@ -749,7 +783,14 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
         start_name, start_file_path, start_line = parse_function_id(start)
         initial_path = [f"{start_func_name}@{start_file_path}:{start_line}"]
         
-        queue.append((start, initial_path, [], [start_file_path], [start_line]))
+        # --- added ---
+        # Sixth element is "\x00".join(path), carried alongside path so the
+        # membership test below is one scan instead of len(path) of them.
+        queue.append((start, initial_path, [], [start_file_path], [start_line],
+                      initial_path[0]))
+        # queue.append((start, initial_path, [], [start_file_path], [start_line]))
+        # --- ended ---
+        
     except Exception as e:
         print(f"Error parsing start function: {start} - {e}")
         return [], []
@@ -779,8 +820,11 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
             temp_queue.sort(key=lambda x: len(x[1]))  # Sort by path length
             queue = deque(temp_queue[:MAX_QUEUE_SIZE//2])
         
-        current, path, directions, call_files, call_lines = queue.popleft()
-        
+        # --- added ---
+        # current, path, directions, call_files, call_lines = queue.popleft()
+        current, path, directions, call_files, call_lines, joined = queue.popleft()
+        # --- ended ---
+
         # Check if we've reached the target
         if current == target:
             all_paths.append({
@@ -820,21 +864,38 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
                     continue
                 
                 # Also skip if it is already included in the current path
-                if any(callee_id in p for p in path):
+                # --- added ---
+                # if any(callee_id in p for p in path):
+                #     continue
+                # Identical predicate to any(callee_id in p for p in path):
+                # a function id never contains "\x00", so no match can straddle
+                # the separator and every hit lies inside a single element.
+                # One C-level scan replaces len(path) of them.
+                if callee_id in joined:
                     continue
-                
+                # --- ended ---
+
                 try:
                     callee_name, callee_file_path, call_line = parse_function_id(callee_id)
                 except:
                     continue
                 
                 # Create new state
-                new_path = path + [f"{callee_name}@{callee_file_path}:{call_line}"]
+                # --- added ---
+                node_str = f"{callee_name}@{callee_file_path}:{call_line}"
+                new_path = path + [node_str]
+                # new_path = path + [f"{callee_name}@{callee_file_path}:{call_line}"]
+                # --- ended ---
+
                 new_directions = directions + ["calls"]
                 new_call_files = call_files + [callee_file_path]
                 new_call_lines = call_lines + [call_line]
                 
-                queue.append((callee_id, new_path, new_directions, new_call_files, new_call_lines))
+                # --- added ---
+                # queue.append((callee_id, new_path, new_directions, new_call_files, new_call_lines))
+                queue.append((callee_id, new_path, new_directions, new_call_files,
+                              new_call_lines, joined + "\x00" + node_str))
+                # --- ended ---
     
     elapsed = time.time() - start_time
     # print(f"BFS completed: {iterations} iterations, {elapsed:.2f}s, {len(all_paths)} paths found")
@@ -846,7 +907,7 @@ def find_all_paths_one_direction(function_data, start, target, max_paths=10):  #
 
 
 
-def find_all_paths(function_data, function_a, function_b):
+def find_all_paths(function_data, function_a, function_b, reachable=None):
     """
     Finds all possible paths from function_a to function_b without a depth limit.
     Only searches in the direction from A to B (A calls B).
@@ -873,7 +934,22 @@ def find_all_paths(function_data, function_a, function_b):
         return [{"path": [name], "directions": [], "call_files": [], "call_lines": []}], []
     
     # Find all paths from A to B
-    return find_all_paths_one_direction(function_data, function_a, function_b)
+    return find_all_paths_one_direction(function_data, function_a, function_b, reachable=reachable)
+
+
+def forward_reachable(function_data, source):
+    """Nodes reachable from source through "callees" only.
+    This is a superset of what find_all_paths_one_direction can ever visit,
+    since its extra guards (visited set, path length, callee cap) only prune."""
+    seen = {source}
+    queue = deque([source])
+    while queue:
+        u = queue.popleft()
+        for v in function_data.get(u, {}).get("callees", []):
+            if v in function_data and v not in seen:
+                seen.add(v)
+                queue.append(v)
+    return seen
 
 
 def get_related_main(
@@ -906,6 +982,12 @@ def get_related_main(
     call_graph = read_json(callee_path)
     functions = read_json(callee_main_path)
 
+    # func_a below is identical on every iteration, so the forward closure is
+    # computed once here instead of being rediscovered per target.
+    source_key = f"{target['name']}@{target['file_path']}:{target['start_line']}"
+    reachable = forward_reachable(call_graph, source_key) if source_key in call_graph else None
+    # caller_index = build_caller_index(call_graph)   # call_graph is read-only below
+
     # Measure the degree
     for call in functions:
         if not (target['file_path'] == call['file_path'] and 
@@ -915,17 +997,23 @@ def get_related_main(
             func_a = f"{target['name']}@{target['file_path']}:{target['start_line']}"
             func_b = f"{call['name']}@{call['file_path']}:{call['start_line']}"
 
-            steps, path, directions, rel_type = find_shortest_path(call_graph, func_a, func_b)
-            all_paths, call_site_list = find_all_paths(call_graph, func_a, func_b)
+            # steps, path, directions, rel_type = find_shortest_path(
+            #     call_graph, func_a, func_b, caller_index
+            # )
+            all_paths, call_site_list = find_all_paths(
+                call_graph, func_a, func_b, reachable=reachable
+            )
             call['all_paths'] = all_paths
             call['call_site_list'] = call_graph[func_a]['call_sites']
 
+            """
             if steps == -1:
                 print("No relationship found between the functions")
             else:
                 print("Path:")
                 for i in range(len(path)-1):
                     print(f"  {path[i]} {directions[i]} {path[i+1]}")
+            """
 
         else:
             # This is the main function itself
@@ -934,11 +1022,11 @@ def get_related_main(
     
     write_json(callee_main_path, functions)
 
-    get_edge_weight(callee_path, callee_main_path, distance_path)
+    # get_edge_weight(callee_path, callee_main_path, distance_path)
 
-    get_total_weight(callee_main_path, distance_path)
+    # get_total_weight(callee_main_path, distance_path)
 
-    write_weighted_centrality(callee_path, callee_main_path, distance_path)
+    # write_weighted_centrality(callee_path, callee_main_path, distance_path)
 
 
 def get_main_info(program_dir, database_json, target_cmd, home_dir, work_dir, meta_dir, flag=None):
@@ -1145,9 +1233,107 @@ def build_call_graph(metadata_files: List[List[Dict]]) -> Tuple[Dict[FunctionId,
 
 def topological_cflow_sort(dependencies):
     """Sort functions into topological order using Tarjan's algorithm for strongly connected components, and also detect isolated nodes"""
+    index = {}
+    low_link = {}
+    # --- added ---
+    # `on_stack` as a set is faster than defaultdict(bool);
+    # `visited` is dropped because membership in `index` already encodes it.
+    on_stack = set()
+    # --- ended ---
+    stack = []
+    component = []
+
+    # --- added ---
+    # Build the set of nodes that have at least one incoming edge, in a single
+    # pass over the adjacency lists. The original code re-scanned every
+    # adjacency list once per node, which made isolation detection O(V*E).
+    targets = set()
+    for deps in dependencies.values():
+        targets.update(deps)
+
+    # A node is isolated iff it has no outgoing edge and no incoming edge.
+    # Nodes absent from `dependencies` necessarily appear in `targets`
+    # (that is the only way they were discovered), so they are never isolated
+    # and do not need to be enumerated.
+    isolated_nodes = {
+        node for node, deps in dependencies.items()
+        if not deps and node not in targets
+    }
+    # --- ended ---
+
+    # Run DFS on each node to find the strongly connected components
+    # --- added ---
+    # Iterative Tarjan: avoids RecursionError on deep call graphs and removes
+    # per-node Python function-call overhead. Each frame keeps an iterator over
+    # the node's neighbors, so resuming continues where it left off.
+    for root in dependencies:
+        if root in index:
+            continue
+
+        index[root] = low_link[root] = len(index)
+        stack.append(root)
+        on_stack.add(root)
+        work = [(root, iter(dependencies.get(root, ())))]
+
+        while work:
+            node, it = work[-1]
+            descended = False
+
+            for neighbor in it:
+                if neighbor not in index:
+                    # Tree edge: push the child and suspend the current frame.
+                    index[neighbor] = low_link[neighbor] = len(index)
+                    stack.append(neighbor)
+                    on_stack.add(neighbor)
+                    work.append((neighbor, iter(dependencies.get(neighbor, ()))))
+                    descended = True
+                    break
+                elif neighbor in on_stack:
+                    # Back edge to a node still on the SCC stack.
+                    if index[neighbor] < low_link[node]:
+                        low_link[node] = index[neighbor]
+
+            if descended:
+                continue
+
+            # All neighbors exhausted: this frame is finished.
+            work.pop()
+            if low_link[node] == index[node]:
+                scc = []
+                while True:
+                    w = stack.pop()
+                    on_stack.discard(w)
+                    scc.append(w)
+                    if w == node:
+                        break
+                component.append(scc)
+
+            # Propagate low_link to the parent, matching the recursive version's
+            # update right after returning from dfs().
+            if work:
+                parent = work[-1][0]
+                if low_link[node] < low_link[parent]:
+                    low_link[parent] = low_link[node]
+    # --- ended ---
+
+    topo_sort = []
+    for scc in component:
+        if len(scc) > 1:
+            # --- added ---
+            # Sort in place with a bound method instead of a lambda.
+            scc.sort(key=index.__getitem__)
+            # --- ended ---
+        topo_sort.extend(scc)
+
+    return topo_sort, isolated_nodes
+
+
+def topological_cflow_sort_original(dependencies):
+    """Sort functions into topological order using Tarjan's algorithm for strongly connected components, and also detect isolated nodes"""
     def dfs(node, stack, on_stack, visited, component):
         index[node] = len(index)
         low_link[node] = index[node]
+        
         stack.append(node)
         on_stack[node] = True
         visited.add(node)

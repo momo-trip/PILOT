@@ -1229,12 +1229,28 @@ def get_is_covered(target_entry, cov_path, target_dir, cov_type):
                     is_covered = branch['taken']
                     return is_covered
                     """
-        
+            
+            # added
+            # No branch on the target line: the old code returned ratio 0 here,
+            # which was silently treated as fully covered.
+            if len(total_branches) == 0:
+                return False
+            uncovered_ratio = len(uncovered_branches) / len(total_branches)
+            # target_uncovered_ratio is 0 (gen_priority writes it as a constant)
+            # or None (get_pure_target). Comparing against None raised TypeError,
+            # which the generic except below swallowed into a None result.
+            if not target_uncovered_ratio:
+                is_covered = (len(uncovered_branches) == 0)
+            else:
+                is_covered = uncovered_ratio < target_uncovered_ratio
+            # ended
+            """
             uncovered_ratio = len(uncovered_branches) / len(total_branches) if len(total_branches) > 0 else 0
             if uncovered_ratio < target_uncovered_ratio:
                 is_covered = True
             else:
                 is_covered = False
+            """
             return is_covered
 
         except FileNotFoundError:
