@@ -950,26 +950,3 @@ if __name__ == "__main__":
         sys.exit(1)
         
 
-
-
-"""
-python3.12 run.py tiffcp_old prepare
-python3.12 run.py tiffcp_old preset
-python3.12 run.py tiffcp_old gcno
-python3.12 run.py tiffcp_old tool
-python3.12 run.py tiffcp_old gen
-
-python3.12 run.py tiffcp_old exp
-python3.12 run.py tiffcp_old set 000
-python3.12 run.py tiffcp_old file 000
-python3.12 run.py tiffcp_old carpet 000
-python3.12 run.py tiffcp_old zig 000
-python3.12 run.py tiffcp_old afl_argv 000
-
-
-python3.12 run.py jpegoptim_old prepare
-python3.12 run.py eu-elfclassify_old prepare
-
-python3.12 run.py jpegoptim_old tool
-python3.12 run.py eu-elfclassify_old tool
-"""

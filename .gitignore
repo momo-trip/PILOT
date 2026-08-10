@@ -17,7 +17,7 @@ decision.json
 config.json 
 configs.py
 trash.py
-**/config.json
+# **/config.json
 **/instances.json
 
 database*/

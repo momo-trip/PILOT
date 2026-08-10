@@ -1597,6 +1597,7 @@ def repair_test_agent(ctx):
     version_count = 0
     error = None
     std_out = None
+    current_max_counter = ctx.testfile_counter
 
     # --- Agent execution environment: inspect target source + author the shell
     #     script only. Building / recompiling / coverage measurement are not done
@@ -1631,6 +1632,7 @@ def repair_test_agent(ctx):
 
     current_coverage = initial_coverage
 
+    llm_start_time = time.time()
     while (1):
         llm_end_time = time.time()
         elapsed_time = llm_end_time - llm_start_time
@@ -3298,6 +3300,7 @@ def repair_branch_agent(ctx):
     version_count = 0
     error = None
     std_out = None
+    current_max_counter = ctx.testfile_counter
 
     # --- Agent execution environment: author the shell script only.
     #     Measurement (run_branch_cov_script) is done by the orchestrator, so the

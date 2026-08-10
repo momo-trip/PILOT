@@ -13,6 +13,7 @@ If you have any questions, please contact me at the email address below.
 PILOT/
 ├── run.py               # main Python script
 ├── config.json          # Configuration JSON file
+├── config_sys.json      # System configuration for the generation loop
 ├── database.json        # Per-target main function path and executable path
 ├── pilot_lib/
 │   ├── __init__.py
@@ -78,19 +79,51 @@ See [program/README.md](program/README.md) for detailed instructions on download
 #### 1. Setup
 Set the model parameters in the JSON file at [PILOT/config.json](https://github.com/momo-trip/PILOT/blob/main/config.json).
 
-**Configuration parameters:**
-- `llm_type` - LLM service provider (e.g., `claude_azure`, `claude`, `gpt`)
-- `llm_model` - Specific model name (e.g., `databricks-claude-sonnet-4`, `gpt-4`, `claude-3-sonnet`)
+**Configuration parameters (`config.json`):**
+- `llm_choice` - LLM service provider (e.g., `claude_azure`, `claude`, `gpt`)
+- `llm_model` - Specific model name (e.g., `databricks-claude-sonnet-4`, `gpt-4`, `claude-3-sonnet`). If `null`, the default model of the selected provider is used
 - `api_key` - Your API key for the LLM service
-- `endpoint` - API endpoint URL (if using Azure or custom endpoints)
-- `region` - Service region (if applicable)
+- `azure_endpoint` - Serving endpoint URL (if using Azure or Databricks)
+- `os_vendor` - Operating system name (e.g., `Ubuntu`)
+- `os_version` - Operating system version (e.g., `20.04`, `22.04`)
+- `strategy` - Seed generation strategy (e.g., `base`)
+- `cent` - Centrality metric used to select target functions (see below)
+
+
+**System parameters (`config_sys.json`):**
+
+These usually do not need to be changed.
+- `user_id` - Identifier for the run
+- `database_path` - Path to the target definition file (default: `database.json`)
 - `max_target_func` - Maximum number of target functions to select
-- `fixed_version_count` - Number of seed variations to generate per target (default: 2)
-- `os_version` - Operating system version (e.g., `Ubuntu 20.04`, `Ubuntu 22.04`)
+- `total_time` - Overall time budget for the generation loop, in seconds
+- `interval` - Interval between periodic tasks such as coverage measurement, in seconds
+- `max_explore_time` - Upper bound on a single exploration phase, in seconds
+- `max_version_count` - Number of seed variations to generate per target
+- `cov_target` - Granularity of coverage measurement (e.g., `function`)
+- `explore_time` - Baseline duration of the exploration phase, in seconds
+- `explore_fix` - Whether the exploration time is fixed (`t` or `f`)
+- `temperature` - Sampling temperature for the LLM
+- `max_num_test` - Maximum number of tests generated per iteration
+- `max_iterations` - Maximum number of iterations of the generation loop
+- `timeout` - Timeout for each command execution, in seconds
+- `output_max` - Maximum number of characters of program output passed to the LLM
+- `context_window` - Context window size of the LLM
+- `AGENT` - Whether to use the agent SDK based generation pipeline
+- `COUNT_PERIODIC` - Whether to measure coverage periodically
+
+
+**Centrality metric options (for `cent` parameter):**
+- `deg` - Degree centrality (number of connections)
+- `bet` - Betweenness centrality (importance in shortest paths)
+- `close` - Closeness centrality (average distance to all other nodes)
+- `page` - PageRank algorithm
+- `random_t` - Random selection (baseline)
+
 
 **LLM options (for `{llm_type}` parameter):**
-- `claude_azure` - Claude via Azure
 - `claude` - Claude via Anthropic API
+- `claude_azure` - Claude via Azure
 - `gpt` - GPT models via OpenAI API
 - `gpt_azure` - GPT via Azure
 - `gemini` - Gemini via Google API
@@ -99,7 +132,7 @@ Set the model parameters in the JSON file at [PILOT/config.json](https://github.
 #### 2. Extract function metadata
 ```bash
 cd PILOT
-export PILOT_BASE_DIR=/home/ubuntu/PILOT
+export PILOT_BASE_DIR=/root/PILOT
 python3 run.py {target_cmd} prepare
 ```
 
@@ -111,10 +144,10 @@ python3 run.py {target_cmd} preset
 After executing the script, you will see output like the following:
 ```
 ---------------- Prepare result ----------------
-/home/ubuntu/PILOT/program/target/expat-2.4.1/tests/benchmark/benchmark.c
-/home/ubuntu/PILOT/program/target/expat-2.4.1/xmlwf/xmlwf.c
-/home/ubuntu/PILOT/program/target/expat-2.4.1/examples/outline.c
-/home/ubuntu/PILOT/program/target/expat-2.4.1/examples/elements.c
+/root/PILOT/program/expat-2.4.1/tests/benchmark/benchmark.c
+/root/PILOT/program/expat-2.4.1/xmlwf/xmltchar.h
+/root/PILOT/program/expat-2.4.1/examples/outline.c
+/root/PILOT/program/expat-2.4.1/examples/elements.c
 Should avoid using as the target because it has two main functions.
 =============== End of prepare ===============
 ```
@@ -122,12 +155,13 @@ Should avoid using as the target because it has two main functions.
 Identify the correct main function for your target command and add it to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
 ```json
 "xmlwf_old": {
-    "main_path": "program/target/expat-2.4.1/xmlwf/xmltchar.h",
+    "main_path": "program/expat-2.4.1/xmlwf/xmltchar.h",
+    "dir_name": "program/expat-2.4.1",
     "cmd_exe": "xmlwf/xmlwf",
     "notes": []
 }
 ```
-For `cmd_exe`, specify the relative path to the target command's executable binary from the base `seedgen` directory.
+For `cmd_exe`, specify the relative path to the target command's executable binary from the base `PILOT_BASE_DIR` directory.
 
 #### 4. Instrument with gcov for coverage measurement
 ```bash
@@ -144,17 +178,10 @@ python3 run.py {target_cmd} tool
 python3 run.py {target_cmd} gen
 ```
 
-**Centrality metric options:**
-- `deg` - Degree centrality (number of connections)
-- `bet` - Betweenness centrality (importance in shortest paths)
-- `close` - Closeness centrality (average distance to all other nodes)
-- `page` - PageRank algorithm
-- `random_t` - Random selection (baseline)
-
 The strategy that PILOT chooses based on the pre-experiment is saved here: `h_strategy.json`.
 
 #### 7. Extract generated shell scripts
-Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `{PILOT_BASE_DIR}/sh_data`.
+Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `{PILOT_BASE_DIR}/seeds`.
 ```bash
 python3 run.py {target_cmd} exp
 ```
@@ -182,7 +209,7 @@ python3 run.py {target_cmd} {fuzzer_type} {seed_id}
 | `afl_argv` | `afl_argvs/` | SelectFuzz |
 
 
-After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `{PILOT_BASE_DIR}/set/PILOT/{target_cmd}/`:
+After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `{PILOT_BASE_DIR}/seeds/pilot/{target_cmd}/`:
 - `input/` - Input files for fuzzing
 - `argvs/` - Argument configurations for CarpetFuzz
 - `afl_argvs/` - Argument configurations for SelectFuzz
