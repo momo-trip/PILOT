@@ -17,8 +17,10 @@ decision.json
 config.json 
 configs.py
 trash.py
+**/compile_commands.json
 # **/config.json
 **/instances.json
+log.txt
 
 database*/
 logs*/
