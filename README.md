@@ -41,8 +41,38 @@ PILOT/
 
 ### Installation
 
-#### 1. Get the Docker image
-TBA
+#### 1. Build the Docker image
+
+Clone all five repositories into the same parent directory:
+
+```bash
+mkdir pilot-workspace && cd pilot-workspace
+git clone https://github.com/momo-trip/PILOT.git
+git clone https://github.com/momo-trip/kiso-utils.git
+git clone https://github.com/momo-trip/kiso-parser-c.git
+git clone https://github.com/momo-trip/kiso-parser-macro.git
+git clone https://github.com/momo-trip/kiso-llm.git
+```
+
+Then build from the **parent** directory — not from inside `PILOT/`, since the
+build context must include the `kiso-*` repositories:
+
+```bash
+docker build --platform=linux/amd64 -f PILOT/Dockerfile -t pilot:latest .
+```
+
+Requires Docker 23 or later (BuildKit). The build takes roughly 40–60 minutes,
+most of which is spent compiling and instrumenting the target programs.
+
+#### 2. Start a container
+
+```bash
+docker run -it --rm pilot:latest
+```
+
+All commands in the following sections are run inside the container, where the
+repository is at `/root/PILOT` and `PILOT_BASE_DIR` is already set.
+
 
 <!-- #### 1. Clone the repository
 
@@ -62,7 +92,7 @@ Required packages include:
 - `anthropic` or `openai` (for LLM API) -->
 
 
-#### 2. Prepare the target program
+#### 3. Prepare the target program
 ```bash
 cd PILOT/program
 git clone {target_program_repository}
@@ -73,10 +103,7 @@ touch c_build.sh
 See [program/README.md](program/README.md) for detailed instructions on downloading and building target programs.
 
 
-
-
-## Phase 1: Seed generation
-#### 1. Setup
+#### 4. Setup
 Set the model parameters in the JSON file at [PILOT/config.json](https://github.com/momo-trip/PILOT/blob/main/config.json).
 
 **Configuration parameters (`config.json`):**
@@ -84,11 +111,11 @@ Set the model parameters in the JSON file at [PILOT/config.json](https://github.
 - `llm_model` - Specific model name (e.g., `databricks-claude-sonnet-4`, `gpt-4`, `claude-3-sonnet`). If `null`, the default model of the selected provider is used
 - `api_key` - Your API key for the LLM service
 - `azure_endpoint` - Serving endpoint URL (if using Azure or Databricks)
+- `AGENT` - Whether to use the agent SDK based generation pipeline
 - `os_vendor` - Operating system name (e.g., `Ubuntu`)
 - `os_version` - Operating system version (e.g., `20.04`, `22.04`)
 - `strategy` - Seed generation strategy (e.g., `base`)
 - `cent` - Centrality metric used to select target functions (see below)
-
 
 **System parameters (`config_sys.json`):**
 
@@ -109,7 +136,6 @@ These usually do not need to be changed.
 - `timeout` - Timeout for each command execution, in seconds
 - `output_max` - Maximum number of characters of program output passed to the LLM
 - `context_window` - Context window size of the LLM
-- `AGENT` - Whether to use the agent SDK based generation pipeline
 - `COUNT_PERIODIC` - Whether to measure coverage periodically
 
 
@@ -129,16 +155,30 @@ These usually do not need to be changed.
 - `gemini` - Gemini via Google API
 
 
-#### 2. Extract function metadata
+**Agent SDK authentication (required when `AGENT` is enabled):**
+
+When `AGENT` is enabled in `config.json`, PILOT drives generation through the
+Claude Agent SDK, which launches Claude Code as a subprocess. This path does **not**
+use the `api_key` field in `config.json`.
+Provide credentials in one of the following ways *inside the container*.
+
+
+## Phase 1: Seed generation
+#### 1. Extract function metadata
 ```bash
 cd PILOT
 export PILOT_BASE_DIR=/root/PILOT
-python3 run.py {target_cmd} prepare
+python3.12 run.py {target_cmd} prepare
 ```
 
-#### 3. Extract function call relationships
+> [!NOTE]
+> The list of available `target_cmd` values of the benchmark set is defined in
+> [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json).
+
+
+#### 2. Extract function call relationships
 ```bash
-python3 run.py {target_cmd} preset
+python3.12 run.py {target_cmd} preset
 ```
 
 After executing the script, you will see output like the following:
@@ -163,57 +203,57 @@ Identify the correct main function for your target command and add it to [PILOT/
 ```
 For `cmd_exe`, specify the relative path to the target command's executable binary from the base `PILOT_BASE_DIR` directory.
 
-#### 4. Instrument with gcov for coverage measurement
+#### 3. Instrument with gcov for coverage measurement
 ```bash
-python3 run.py {target_cmd} gcno
+python3.12 run.py {target_cmd} gcno
 ```
 
-#### 5. Prepare native tools for input generation via LLM interaction
+#### 4. Prepare native tools for input generation via LLM interaction
 ```bash
-python3 run.py {target_cmd} tool
+python3.12 run.py {target_cmd} tool
 ```
 
-#### 6. Run iterative seed generation cycle
+#### 5. Run iterative seed generation cycle
 ```bash
-python3 run.py {target_cmd} gen
+python3.12 run.py {target_cmd} gen
 ```
 
 The strategy that PILOT chooses based on the pre-experiment is saved here: `h_strategy.json`.
 
-#### 7. Extract generated shell scripts
+#### 6. Extract generated shell scripts
 Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `{PILOT_BASE_DIR}/seeds`.
 ```bash
-python3 run.py {target_cmd} exp
+python3.12 run.py {target_cmd} exp
 ```
 
 ## Phase 2: Reformatting
 #### 1. Setup
 ```bash
-python3 run.py {target_cmd} set {seed_id}
+python3.12 run.py {target_cmd} set {seed_id}
 ```
 
 #### 2. Retrieve input files
 ```bash
-python3 run.py {target_cmd} file {seed_id}
+python3.12 run.py {target_cmd} file {seed_id}
 ```
 
 #### 3. Format test scripts into fuzzing inputs
 ```bash
-python3 run.py {target_cmd} {fuzzer_type} {seed_id}
+python3.12 run.py {target_cmd} {fuzzer_type} {seed_id}
 ```
 
 | `fuzzer_type` | Output directory | Used by |
 |---|---|---|
-| `carpet` | `argvs/` | CarpetFuzz |
-| `zig` | `keyword_dict/` | ZigZagFuzz |
+| `carpet` | `carpet_argvs/` | CarpetFuzz |
+| `zigzag` | `keyword_dict/` | ZigZagFuzz |
 | `afl_argv` | `afl_argvs/` | SelectFuzz |
 
 
-After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `{PILOT_BASE_DIR}/seeds/pilot/{target_cmd}/`:
-- `input/` - Input files for fuzzing
-- `argvs/` - Argument configurations for CarpetFuzz
-- `afl_argvs/` - Argument configurations for SelectFuzz
-- `keyword_dict/` - Keyword dictionary for ZigZagFuzz
+After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `{PILOT_BASE_DIR}/seeds/pilot/`:
+- `input/{target_cmd}_{seed_id}/` - Input files for fuzzing
+- `carpet_argvs/{target_cmd}_{seed_id}.txt` - Argument configurations for CarpetFuzz
+- `keyword_dict/list_{target_cmd}_{seed_id}.txt` - Keyword dictionary for ZigZagFuzz
+- `afl_argvs/{target_cmd}_{seed_id}/` - Argument configurations for SelectFuzz
 
 These seeds are now ready to be used with your chosen fuzzer in Phase 3.
 

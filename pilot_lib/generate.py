@@ -2393,6 +2393,10 @@ def explore_path(
             ) 
             print("Getting the next target...")
 
+            if 'target_function' not in target_entry:
+                print("Finished: all targets explored")
+                sys.exit(0)
+
         print(f"\n=====================================")
         print(f"Target entry @explore_path: {target_entry}")
         print("=====================================")

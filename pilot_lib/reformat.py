@@ -268,7 +268,7 @@ def change_command_string_llm(
     if change_type != "input":
         prompt.extend(["Regarding the contents of the txt file that lists candidate command-line arguments, please rewrite them by changing the format of the input files and output files so that fuzzing can be performed."])
         
-        prompt.extend(["## Response rules:",
+        prompt.extend([f"\n## Response rules:",
                     "- Please write the answer in JSON format following the format below.",
                     "",
                     "### Value of the \"answer\" key:",
@@ -300,7 +300,7 @@ def change_command_string_llm(
     else:
         prompt.extend(["Regarding the contents of the txt file that lists candidate command-line arguments, please extract only the input file paths, extract them one file path at a time, and list them in the output txt file with a line break in the format Line X. <input file path>."])
         
-        prompt.extend(["## Response rules:",
+        prompt.extend([f"\n## Response rules:",
                     #"- Write the input file as @@.",
                     #"- Write the output file as /tmp/foo.",
                     #"- Please remove redirections (2>/dev/null, 2>&1, etc.) and shell control structures (|| true, && etc.), leaving only the pure command part.",
@@ -330,7 +330,7 @@ def change_command_string_llm(
         count += 1
         print(f"Counting: {count} / {len(slices)}...")
         if count == 1:
-            prompt.extend(["## txt file:"])
+            prompt.extend([f"\n## txt file:"])
             write_file(f"{database_dir}/lines.txt", file_string)
             file_string = get_lined_code(f"{database_dir}/lines.txt", database_dir)
             prompt.extend([f'{file_string}\n'])
@@ -381,7 +381,7 @@ def change_command_string_llm(
 
             if count > 1:
                 if ongoing_flag is None:
-                    prompt.extend(["## txt file:"])
+                    prompt.extend([f"\n## txt file:"])
                     write_file(f"{database_dir}/lines.txt", file_string)
                     file_string = get_lined_code(f"{database_dir}/lines.txt", database_dir)
                     prompt.extend([f'{file_string}\n'])
@@ -546,6 +546,11 @@ def brash_up(input_path, output_path, target_cmd, analysis_type):
             # Remove the pattern that starts with "Line ", followed by a number, and ends with ". "
             cleaned_line = re.sub(r'^Line\s+\d+[.:]?\s*', '', line)
 
+            # added
+            if not cleaned_line.strip():
+                continue
+            # ended
+
             if analysis_type != "input":
                 # Remove the part before target_cmd
                 if target_cmd in cleaned_line:
@@ -576,15 +581,15 @@ def brash_up(input_path, output_path, target_cmd, analysis_type):
 
 def prepare_input_files(
     target_cmd, order, dst_path, input_brashed_path, 
-    target_dir, database_json, directory_id
+    target_dir, database_json, directory_id,
+    process_type, database_dir, shell_dir
 ):
-    print("Function in car prepare_input_files()")    
+    print("Function in car prepare_input_files")    
 
     cmd = database_json[target_cmd]["cmd_exe"] 
     pure_cmd = get_pure_cmd(target_cmd)
-    test_list = get_run_test_path(directory_id)
+    test_list = get_run_test_path(shell_dir) #directory_id)
 
-    #print(test_list)
     for run_test_path in test_list:
         print(run_test_path)
     print(len(test_list))
@@ -592,10 +597,11 @@ def prepare_input_files(
     count = 0
     for run_test_path in test_list:
         copy_file(run_test_path, target_dir)
-        print(target_dir)
+        
         run_filename = os.path.basename(run_test_path)
-        print("Running ...")
-        run_script(f"{target_dir}/{run_filename}", 30, True, None, "both")
+        local_path = f"{target_dir}/{run_filename}"
+        # print("Running ...")
+        run_script(process_type, database_dir, local_path, 30, True, None, "both")
 
         count += 1
         print(f"{count} / {len(test_list)}")
@@ -698,7 +704,9 @@ def generate_base_argv(
 def generate_input_files(
     base_argv_path, dst_path,
     target_cmd, directory_id, llm_interface,
-    database_dir, target_dir, transit_dir, database_json, seed_dir
+    database_dir, target_dir, transit_dir, database_json, seed_dir,
+    shell_dir, process_type,
+
 ):
     random_string = ""
     input_raw_path = f"{transit_dir}/{target_cmd}_{directory_id}_raw_input.txt"
@@ -718,7 +726,8 @@ def generate_input_files(
 
     prepare_input_files(
         target_cmd, "all", dst_path, input_brashed_path, 
-        target_dir, database_json, directory_id
+        target_dir, database_json, directory_id,
+        process_type, database_dir, shell_dir
     )
     
 

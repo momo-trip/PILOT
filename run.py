@@ -227,7 +227,7 @@ def get_basic_report(
         total_cost = total_in * 0.0000050 + total_out * 0.0000150
     total_cost_jpy = total_cost * USD_TO_JPY
 
-    print(f"\nTotal cost: {total_cost:.6f} USD\n") # , {total_cost_jpy:.2f} JPY\n")
+    # print(f"\nTotal cost: {total_cost:.6f} USD\n") # , {total_cost_jpy:.2f} JPY\n")
 
     current_directory = os.getcwd()
 
@@ -542,6 +542,13 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
         if "claude" in config.llm_choice:
             config.llm_model = get_claude_model(config.llm_choice)
 
+    if process_type in ["file", "carpet", "zigzag"]:
+        config.AGENT = False
+
+        if os.path.exists(paths.chat_dir):
+            delete_directory(paths.chat_dir)
+        create_directory(paths.chat_dir)
+
     if config.AGENT is False:
         llm_interface = LLMInterface(
             AGENT=config.AGENT,
@@ -835,6 +842,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
 
             empty_id = export_to_seed_dir(paths.snap_dir, paths.shell_dir, target_cmd)
 
+            print(f"\nGenerated seed_id: {empty_id}")
             print(f"\nNext action:")
             print(f"python3.12 run.py {target_cmd} set {empty_id}")
 
@@ -857,7 +865,8 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             generate_input_files(
                 paths.base_argv_path, input_file_dir,
                 target_cmd, directory_id, llm_interface,
-                paths.database_dir, paths.target_dir, paths.transit_dir, database_json, paths.seed_dir
+                paths.database_dir, paths.target_dir, paths.transit_dir, database_json, paths.seed_dir,
+                paths.target_shell_dir, process_type
             )
 
             print(f"\nInput files: saved at {input_file_dir}")
@@ -879,7 +888,7 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             zigzag_argv_path = f"{paths.seed_dir}/pilot/keyword_dict/list_{target_cmd}_{directory_id}.txt"
             
             generate_zigzag_argv(
-                base_argv_path, zigzag_argv_path,
+                paths.base_argv_path, zigzag_argv_path,
                 target_cmd
             )
             print(f"\nSaved: {zigzag_argv_path}")
