@@ -30,6 +30,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg lsb-release git \
         software-properties-common apt-transport-https \
+        vim \
  && wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
         https://apt.llvm.org/llvm-snapshot.gpg.key \
  && echo "deb https://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_VERSION} main" \

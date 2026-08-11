@@ -1,6 +1,6 @@
 {
     "llm_choice" : "claude_azure",
-    "llm_model" : null,
+    "llm_model" : "claude-opus-4-8",
     "api_key" : "",
     "azure_endpoint" : "",
     "AGENT": true,

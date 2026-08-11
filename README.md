@@ -51,8 +51,7 @@ build context must include the `kiso-*` repositories:
 docker build -f PILOT/Dockerfile -t pilot:latest .
 ```
 
-Requires Docker 23 or later (BuildKit). The build takes roughly 40–60 minutes,
-most of which is spent compiling and instrumenting the target programs.
+Requires Docker 23 or later (BuildKit).
 
 #### 2. Start a container
 
@@ -60,9 +59,7 @@ most of which is spent compiling and instrumenting the target programs.
 docker run -it --name pilot-run pilot:latest
 ```
 
-All commands in the following sections are run inside the container, where the
-repository is at `/root/PILOT` and `PILOT_BASE_DIR` is already set.
-
+All commands in the following sections are run inside the container.
 
 
 #### 3. Prepare the target program
@@ -77,7 +74,9 @@ See [program/README.md](program/README.md) for detailed instructions on download
 
 
 #### 4. Setup
-Set the model parameters in the JSON file at [PILOT/config.json](https://github.com/momo-trip/PILOT/blob/main/config.json).
+Create a JSON file at `/root/PILOT/config.json` and set the model parameters in
+that file. See [config_example.json](https://github.com/momo-trip/PILOT/blob/main/config_example.json)
+for a template.
 
 **Configuration parameters (`config.json`):**
 - `llm_choice` - LLM service provider (e.g., `claude`, `claude_azure`)
@@ -90,26 +89,6 @@ Set the model parameters in the JSON file at [PILOT/config.json](https://github.
 - `strategy` - Seed generation strategy (e.g., `base`)
 - `cent` - Centrality metric used to select target functions (see below)
 
-**System parameters (`config_sys.json`):**
-
-Defaults are provided. Override them as necessary.
-- `user_id` - Identifier for the run
-- `database_path` - Path to the target definition file (default: `database.json`)
-- `max_target_func` - Maximum number of target functions to select
-- `total_time` - Overall time budget for the generation loop, in seconds
-- `interval` - Interval between periodic tasks such as coverage measurement, in seconds
-- `max_explore_time` - Upper bound on a single exploration phase, in seconds
-- `max_version_count` - Number of seed variations to generate per target
-- `cov_target` - Granularity of coverage measurement (e.g., `function`)
-- `explore_time` - Baseline duration of the exploration phase, in seconds
-- `explore_fix` - Whether the exploration time is fixed (`t` or `f`)
-- `temperature` - Sampling temperature for the LLM
-- `max_num_test` - Maximum number of tests generated per iteration
-- `max_iterations` - Maximum number of iterations of the generation loop
-- `timeout` - Timeout for each command execution, in seconds
-- `output_max` - Maximum number of characters of program output passed to the LLM
-- `context_window` - Context window size of the LLM
-- `COUNT_PERIODIC` - Whether to measure coverage periodically
 
 
 **Centrality metric options (for `cent` parameter):**
@@ -141,9 +120,31 @@ documentation for the available account types and credentials:
 <https://code.claude.com/docs/en/authentication>
 
 
+**System parameters (`config_sys.json`):**
+
+Defaults are provided. Override them as necessary.
+- `user_id` - Identifier for the run
+- `database_path` - Path to the target definition file (default: `database.json`)
+- `max_target_func` - Maximum number of target functions to select
+- `total_time` - Overall time budget for the generation loop, in seconds
+- `interval` - Interval between periodic tasks such as coverage measurement, in seconds
+- `max_explore_time` - Upper bound on a single exploration phase, in seconds
+- `max_version_count` - Number of seed variations to generate per target
+- `cov_target` - Granularity of coverage measurement (e.g., `function`)
+- `explore_time` - Baseline duration of the exploration phase, in seconds
+- `explore_fix` - Whether the exploration time is fixed (`t` or `f`)
+- `temperature` - Sampling temperature for the LLM
+- `max_num_test` - Maximum number of tests generated per iteration
+- `max_iterations` - Maximum number of iterations of the generation loop
+- `timeout` - Timeout for each command execution, in seconds
+- `output_max` - Maximum number of characters of program output passed to the LLM
+- `context_window` - Context window size of the LLM
+- `COUNT_PERIODIC` - Whether to measure coverage periodically
+
+
 ### Important notes:
 - While the codebase includes code paths for other LLM providers, only Claude models are currently supported.
-- The harness was originally hand-written, but continuous maintenance is costly, so this part is now partly delegated to Claude Code. Please run with "AGENT": true; the hand-written path is retained for reference but is no longer actively maintained.
+- The harness was originally hand-written, but continuous maintenance is costly, so this part is now partly delegated to Claude Code. Please run with `"AGENT": true`; the hand-written path is retained for reference but is no longer actively maintained.
 - In recent runs, seed generation may occasionally be blocked by the LLM provider's safety filter. PILOT treats this as a skip and proceeds to the next target function.
 - Seed generation uses the environment specified above, while each fuzzer requires its own separate environment. Please follow the respective fuzzer's guidelines for setting up the fuzzing execution environment.
 
@@ -242,13 +243,12 @@ python3.12 run.py {target_cmd} gen
 
 
 #### 6. Extract generated shell scripts
-Run the following command to extract the generated shell scripts. 
 ```bash
 python3.12 run.py {target_cmd} exp
 ```
 
 **Output:**
-- `seeds/{target_cmd}_{seed_id}/` - Generated seed scripts, collected from `snapdata/`
+- `seeds/shell/{target_cmd}_{seed_id}/` - Generated seed scripts, collected from `snapdata/`
 
 The assigned `{seed_id}` is printed at the end of the run, along with the next
 command to run.
