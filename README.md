@@ -2,12 +2,6 @@
 
 PILOT is a novel CLI fuzzing framework that leverages Large Language Models (LLMs) to generate semantically-rich command-line options and input files for discovering vulnerabilities in CLI applications.
 
-## Important Notice
-If you have any questions, please contact me at the email address below.
-
-<u>shiraishi@os.is.s.u-tokyo.ac.jp</u>
-
-
 ## Directory structure
 ```
 PILOT/
@@ -30,15 +24,6 @@ PILOT/
 ```
 
 ## Setup
-
-### Prerequisites
-- **Python**: Python 3.12 or higher
-- **Operating system**: Ubuntu 20.04 or later (recommended)
-
-### Note:
-<!-- - Sandboxed environment setup: Docker configurations are not provided with this code. Please set up your own sandboxed environment and deploy this repository within it. -->
-- Seed generation uses the environment specified above, while each fuzzer (mutator) requires its own separate environment. Please follow the respective mutator's guidelines for setting up the fuzzing execution environment.
-
 ### Installation
 
 #### 1. Build the Docker image
@@ -58,7 +43,7 @@ Then build from the **parent** directory — not from inside `PILOT/`, since the
 build context must include the `kiso-*` repositories:
 
 ```bash
-docker build --platform=linux/amd64 -f PILOT/Dockerfile -t pilot:latest .
+docker build -f PILOT/Dockerfile -t pilot:latest .
 ```
 
 Requires Docker 23 or later (BuildKit). The build takes roughly 40–60 minutes,
@@ -67,34 +52,17 @@ most of which is spent compiling and instrumenting the target programs.
 #### 2. Start a container
 
 ```bash
-docker run -it --rm pilot:latest
+docker run -it --name pilot-run pilot:latest
 ```
 
 All commands in the following sections are run inside the container, where the
 repository is at `/root/PILOT` and `PILOT_BASE_DIR` is already set.
 
 
-<!-- #### 1. Clone the repository
-
-```bash
-git clone https://github.com/momo-trip/PILOT.git
-```
-
-#### 2. Install python dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-Required packages include:
-- `libclang` (for C code parsing)
-- `networkx` (for call graph analysis)
-- `anthropic` or `openai` (for LLM API) -->
-
 
 #### 3. Prepare the target program
 ```bash
-cd PILOT/program
+cd ~/PILOT/program
 git clone {target_program_repository}
 cd {program_name}
 touch c_build.sh
@@ -107,8 +75,8 @@ See [program/README.md](program/README.md) for detailed instructions on download
 Set the model parameters in the JSON file at [PILOT/config.json](https://github.com/momo-trip/PILOT/blob/main/config.json).
 
 **Configuration parameters (`config.json`):**
-- `llm_choice` - LLM service provider (e.g., `claude_azure`, `claude`, `gpt`)
-- `llm_model` - Specific model name (e.g., `databricks-claude-sonnet-4`, `gpt-4`, `claude-3-sonnet`). If `null`, the default model of the selected provider is used
+- `llm_choice` - LLM service provider (e.g., `claude_azure`, `claude`)
+- `llm_model` - Specific model name (e.g., `databricks-claude-opus-4-8`, `claude-4-sonnet`). If `null`, the default model of the selected provider is used
 - `api_key` - Your API key for the LLM service
 - `azure_endpoint` - Serving endpoint URL (if using Azure or Databricks)
 - `AGENT` - Whether to use the agent SDK based generation pipeline
@@ -147,12 +115,12 @@ These usually do not need to be changed.
 - `random_t` - Random selection (baseline)
 
 
-**LLM options (for `{llm_type}` parameter):**
+**LLM options (for `{llm_choice}` parameter):**
 - `claude` - Claude via Anthropic API
-- `claude_azure` - Claude via Azure
-- `gpt` - GPT models via OpenAI API
+- `claude_azure` - Claude via Azure Databricks
+<!-- - `gpt` - GPT models via OpenAI API
 - `gpt_azure` - GPT via Azure
-- `gemini` - Gemini via Google API
+- `gemini` - Gemini via Google API -->
 
 
 **Agent SDK authentication (required when `AGENT` is enabled):**
@@ -160,14 +128,23 @@ These usually do not need to be changed.
 When `AGENT` is enabled in `config.json`, PILOT drives generation through the
 Claude Agent SDK, which launches Claude Code as a subprocess. This path does **not**
 use the `api_key` field in `config.json`.
-Provide credentials in one of the following ways *inside the container*.
+
+Authentication follows the standard Claude Code setup. See the official
+documentation for the available account types and credentials:
+<https://code.claude.com/docs/en/authentication>
+
+
+### Important notes:
+- While the codebase includes code paths for other LLM providers, only Claude models are currently supported.
+- The harness was originally hand-written, but continuous maintenance is costly, so this part is now partly delegated to Claude Code. Please run with "AGENT": true; the hand-written path is retained for reference but is no longer actively maintained.
+- In recent runs, seed generation may occasionally be blocked by the LLM provider's safety filter. PILOT treats this as a skip and proceeds to the next target function.
+- Seed generation uses the environment specified above, while each fuzzer requires its own separate environment. Please follow the respective fuzzer's guidelines for setting up the fuzzing execution environment.
 
 
 ## Phase 1: Seed generation
 #### 1. Extract function metadata
 ```bash
-cd PILOT
-export PILOT_BASE_DIR=/root/PILOT
+cd ~/PILOT
 python3.12 run.py {target_cmd} prepare
 ```
 
@@ -183,7 +160,7 @@ python3.12 run.py {target_cmd} preset
 
 After executing the script, you will see output like the following:
 ```
----------------- Prepare result ----------------
+----------------------------------------------
 /root/PILOT/program/expat-2.4.1/tests/benchmark/benchmark.c
 /root/PILOT/program/expat-2.4.1/xmlwf/xmltchar.h
 /root/PILOT/program/expat-2.4.1/examples/outline.c
@@ -201,7 +178,10 @@ Identify the correct main function for your target command and add it to [PILOT/
     "notes": []
 }
 ```
-For `cmd_exe`, specify the relative path to the target command's executable binary from the base `PILOT_BASE_DIR` directory.
+For `cmd_exe`, specify the path to the target command's executable binary,
+relative to `dir_name`. For `main_path` and `dir_name`, specify the path relative to
+`/root/PILOT`.
+
 
 #### 3. Instrument with gcov for coverage measurement
 ```bash
@@ -218,10 +198,10 @@ python3.12 run.py {target_cmd} tool
 python3.12 run.py {target_cmd} gen
 ```
 
-The strategy that PILOT chooses based on the pre-experiment is saved here: `h_strategy.json`.
+The strategy that PILOT chooses based on the pre-experiment is saved here: `decision.json`.
 
 #### 6. Extract generated shell scripts
-Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `{PILOT_BASE_DIR}/seeds`.
+Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `/root/PILOT/seeds`.
 ```bash
 python3.12 run.py {target_cmd} exp
 ```
@@ -249,7 +229,7 @@ python3.12 run.py {target_cmd} {fuzzer_type} {seed_id}
 | `afl_argv` | `afl_argvs/` | SelectFuzz |
 
 
-After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `{PILOT_BASE_DIR}/seeds/pilot/`:
+After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `/root/PILOT/seeds/pilot/`:
 - `input/{target_cmd}_{seed_id}/` - Input files for fuzzing
 - `carpet_argvs/{target_cmd}_{seed_id}.txt` - Argument configurations for CarpetFuzz
 - `keyword_dict/list_{target_cmd}_{seed_id}.txt` - Keyword dictionary for ZigZagFuzz
@@ -266,8 +246,8 @@ Use these seeds with your chosen fuzzer according to its specific environment re
 ### CarpetFuzz
 - Repo URL: https://github.com/waugustus/CarpetFuzz-fuzzer/tree/717289769d8219c129fa2ea1cbfba73e23de17d2
 - Configuration parameters:
-    - `i_dir`: {PILOT_BASE_DIR}/set/PILOT/{target_cmd}/input
-    - `K_path`: {PILOT_BASE_DIR}/set/PILOT/{target_cmd}/argvs
+    - `i_dir`: /root/PILOT/seeds/pilot/input/{target_cmd}_{seed_id}
+    - `K_path`: /root/PILOT/seeds/pilot/carpet_argvs/{target_cmd}_{seed_id}.txt
 - Command to run:
 ```bash
 ${CarpetFuzz}/afl-fuzz -i {i_dir} -o out_1 -K {K_path} -- ./{target_cmd}.afl @@
@@ -276,11 +256,11 @@ ${CarpetFuzz}/afl-fuzz -i {i_dir} -o out_1 -K {K_path} -- ./{target_cmd}.afl @@
 ### ZigZagFuzz
 - Repo URL: https://github.com/swtv-kaist/ZigZagFuzz
 - Configuration parameters:
-    - `seed_dir`: {PILOT_BASE_DIR}/set/PILOT/{target_cmd}/input
-    - `keyword_dir`: {PILOT_BASE_DIR}/set/PILOT/{target_cmd}/keyword_dict
+    - `seed_dir`: /root/PILOT/seeds/pilot/input/{target_cmd}_{seed_id}
+    - `keyword_path`: /root/PILOT/seeds/pilot/keyword_dict/list_{target_cmd}_{seed_id}.txt
 - Command to run:
 ```bash
-${ZigZagFuzz_repo}/afl-fuzz -i {seed_dir} -o out_1 -K 2 -a {keyword_dir} -- ./{target_cmd}.afl {prefix}
+${ZigZagFuzz_repo}/afl-fuzz -i {seed_dir} -o out_1 -K 2 -a {keyword_path} -- ./{target_cmd}.afl
 ```
 
 ### SelectFuzz
@@ -288,9 +268,9 @@ ${ZigZagFuzz_repo}/afl-fuzz -i {seed_dir} -o out_1 -K 2 -a {keyword_dir} -- ./{t
 - Setup for target functions\
   Please set the target functions in each BBtargets_{target_cmd}.txt file.
 - argv interface\
-  Before fuzing, it is required to insert AFL++ argv fuzzing interface.
+  Before fuzzing, it is required to insert AFL++ argv fuzzing interface.
 - Configuration parameters:
-    - `seed_dir`: {PILOT_BASE_DIR}/set/PILOT/{target_cmd}/afl_argvs
+    - `seed_dir`: /root/PILOT/seeds/pilot/afl_argvs/{target_cmd}_{seed_id}
 - Command to run: 
 ```bash
 $AFLGO/afl-fuzz -m none -z exp -c 45m -i {seed_dir} -o out_1 -- ./{target_cmd}.afl
@@ -301,7 +281,10 @@ $AFLGO/afl-fuzz -m none -z exp -c 45m -i {seed_dir} -o out_1 -- ./{target_cmd}.a
 - ArXiv: https://arxiv.org/abs/2511.20555
 - 🆕 This work has been accepted at IEEE S&P 2026.
 
+
 ## Contact
+If you have any questions, please contact me at the email address below.
+
 Momoko Shiraishi\
 University email: <u>shiraishi@os.is.s.u-tokyo.ac.jp</u>\
 (Personal email: <u>momoko.shiraishi36@gmail.com</u>)

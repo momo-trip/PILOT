@@ -778,19 +778,6 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
                         database_json, error, std_out, graph_metrics, G,
                         WO_READ, WO_PATH, WO_VALIDATION, testfile_counter
                     ) 
-                    # # repair branches
-                    # target_entry = {
-                    #     "target_path": f"{home_dir}/workspace_tiffcp_old/libtiff-git-b51bb/libtiff/tiffiop.h",
-                    #     "target_line": 114,
-                    #     "target_function": "tiff",
-                    #     'target_uncovered_ratio' : 0.2,
-                    #     'target_branch' : 2,
-                    #     'target_end_line' : 32,
-                    #     'explore_time' : 300,
-                    #     'original_run_test_path' : paths.run_test_path,
-                    # }
-                    # TEST = True
-                    # if TEST is True:
                     if target_entry['is_covered'] is True and target_entry['is_full_branch_covered'] is False:
                         try:
                             testfile_counter = explore_branch(

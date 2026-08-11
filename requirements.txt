@@ -12,7 +12,7 @@ chardet
 watchdog
 ijson
 pycparser
-clang==19.1.0
+clang>=19.1,<20
 tomlkit
 intervaltree
 pandas
