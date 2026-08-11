@@ -134,11 +134,11 @@ RUN python3.12 -m pip install --no-cache-dir -e /root/kiso-utils \
 RUN cd /root/kiso-parser-macro && ./download_clang.sh && ./update.sh
 RUN cd /root/kiso-parser-c     && ./download_clang.sh && ./update.sh
 
-# ---------------------------------------------------------------------------
-# 6. Fetch and instrument the target programs
-#    This is the longest stage, so it comes last.
-# ---------------------------------------------------------------------------
-RUN cd /root/PILOT/program && ./h_setup.sh
+# # ---------------------------------------------------------------------------
+# # 6. Fetch and instrument the target programs
+# #    This is the longest stage, so it comes last.
+# # ---------------------------------------------------------------------------
+RUN cd /root/PILOT/program && ./h_download.sh
 RUN cd /root/PILOT/scripts && ./h_set_build.sh
 
 WORKDIR /root/PILOT
