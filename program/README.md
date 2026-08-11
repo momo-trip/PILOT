@@ -41,5 +41,5 @@ bash h_download.sh
    ./c_build.sh
    ```
 
-**Important:** Replace `{program_name}` with the actual program name (e.g., `ffmpeg_old`, `yara_old`).
+**Important:** Replace `{program_name}` with the actual program name (e.g., `ffmpeg-N-103440-g2f0113be3f`, `yara-4.1.1`).
 
