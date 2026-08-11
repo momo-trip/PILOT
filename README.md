@@ -5,6 +5,9 @@ PILOT is a novel CLI fuzzing framework that leverages Large Language Models (LLM
 ## Directory structure
 ```
 PILOT/
+├── Dockerfile               # Container image definition (build from parent dir)
+├── Dockerfile.dockerignore  # Build context exclusions for the Dockerfile
+├── requirements.txt         # Python dependencies installed in the image
 ├── run.py               # main Python script
 ├── config.json          # Configuration JSON file
 ├── config_sys.json      # System configuration for the generation loop
@@ -19,6 +22,8 @@ PILOT/
 │   └── utils.py         # Shared helpers
 ├── program/               # Target applications
 │   └── h_download.sh      # Download script for target programs
+├── scripts/               # Helper scripts for building/instrumenting targets
+│   └── h_set_build.sh     # Sets up c_build.sh for each target program
 ├── .gitignore          
 └── README.md           # Project documentation
 ```
@@ -75,8 +80,8 @@ See [program/README.md](program/README.md) for detailed instructions on download
 Set the model parameters in the JSON file at [PILOT/config.json](https://github.com/momo-trip/PILOT/blob/main/config.json).
 
 **Configuration parameters (`config.json`):**
-- `llm_choice` - LLM service provider (e.g., `claude_azure`, `claude`)
-- `llm_model` - Specific model name (e.g., `databricks-claude-opus-4-8`, `claude-4-sonnet`). If `null`, the default model of the selected provider is used
+- `llm_choice` - LLM service provider (e.g., `claude`, `claude_azure`)
+- `llm_model` - Specific model name (e.g., `claude-4-sonnet`, `databricks-claude-opus-4-8`). If `null`, the default model of the selected provider is used
 - `api_key` - Your API key for the LLM service
 - `azure_endpoint` - Serving endpoint URL (if using Azure Databricks)
 - `AGENT` - Whether to use the agent SDK based generation pipeline
@@ -87,7 +92,7 @@ Set the model parameters in the JSON file at [PILOT/config.json](https://github.
 
 **System parameters (`config_sys.json`):**
 
-These usually do not need to be changed.
+Defaults are provided. Override them as necessary.
 - `user_id` - Identifier for the run
 - `database_path` - Path to the target definition file (default: `database.json`)
 - `max_target_func` - Maximum number of target functions to select
@@ -113,6 +118,8 @@ These usually do not need to be changed.
 - `close` - Closeness centrality (average distance to all other nodes)
 - `page` - PageRank algorithm
 - `random_t` - Random selection (baseline)
+
+The strategy that PILOT chooses based on the pre-experiment is saved here: [`decision.json`](https://github.com/momo-trip/PILOT/blob/main/decision.json).
 
 
 **LLM options (for `{llm_choice}` parameter):**
@@ -148,6 +155,12 @@ cd ~/PILOT
 python3.12 run.py {target_cmd} prepare
 ```
 
+**Output:**
+- `metadata_{target_cmd}/` - Extracted function metadata
+- `workspace_{target_cmd}/` - The target rebuilt
+- `database/{target_cmd}/` - Per-program misc data
+
+
 > [!NOTE]
 > The list of available `target_cmd` values of the benchmark set is defined in
 > [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json). 
@@ -163,8 +176,6 @@ python3.12 run.py {target_cmd} prepare
 ```
 For `dir_name`, specify the path relative to `/root/PILOT`.
 
-
-The extracted metadata is written to `metadata_{target_cmd}/`.
 
 After executing the script, you will see output like the following:
 ```
@@ -196,18 +207,27 @@ relative to `dir_name`. For `main_path`, specify the path relative to
 python3.12 run.py {target_cmd} preset
 ```
 
+**Output:**
+  - `database/{target_cmd}/callee.json` / `callee_main.json` - Function call relationships
+
 
 #### 3. Instrument with gcov for coverage measurement
 ```bash
 python3.12 run.py {target_cmd} gcno
 ```
 
+**Output:**
+- `preset/{target_cmd}/workspace_{target_cmd}/` - Copy of the instrumented build for reuse
+
+
 #### 4. Prepare native tools for input generation via LLM interaction
 ```bash
 python3.12 run.py {target_cmd} tool
 ```
 
-The extracted tool data is written to `tools/{target_cmd}/`.
+**Output:**
+- `tools/{target_cmd}/` - Extracted tool data
+- `chats_tool/{target_cmd}/` - LLM conversation logs for this step
 
 
 #### 5. Run iterative seed generation cycle
@@ -215,7 +235,11 @@ The extracted tool data is written to `tools/{target_cmd}/`.
 python3.12 run.py {target_cmd} gen
 ```
 
-- The strategy that PILOT chooses based on the pre-experiment is saved here: `decision.json`.
+**Output:**
+- `snapdata/{target_cmd}/` - Generated test scripts per target function
+- `chats_gen/{target_cmd}/` - LLM conversation logs for this step
+- `archive/{trial_id}_gen_{llm_model}_{strategy}_{cent}/` - Archived run results (chats, snapdata, coverage report, token usage, `setting.json`)
+
 
 #### 6. Extract generated shell scripts
 Run the following command to extract the generated shell scripts. 
@@ -223,7 +247,12 @@ Run the following command to extract the generated shell scripts.
 python3.12 run.py {target_cmd} exp
 ```
 
-The seed scripts for each command will be saved in `/root/PILOT/seeds`.
+**Output:**
+- `seeds/{target_cmd}_{seed_id}/` - Generated seed scripts, collected from `snapdata/`
+
+The assigned `{seed_id}` is printed at the end of the run, along with the next
+command to run.
+
 
 ## Phase 2: Reformatting
 #### 1. Setup
@@ -234,30 +263,39 @@ order the `python3.12 run.py {target_cmd} exp` command writes them.
 python3.12 run.py {target_cmd} set {seed_id}
 ```
 
+**Output:**
+- `transit/{target_cmd}_{seed_id}_base_argv.txt` - Candidate command lines extracted from the seed scripts
+
+
 #### 2. Retrieve input files
 ```bash
 python3.12 run.py {target_cmd} file {seed_id}
 ```
+**Output:**
+- `seeds/pilot/input/{target_cmd}_{seed_id}/` - Input files collected by replaying the seed scripts
+- `chats_file/{target_cmd}/` - LLM conversation logs for this step
+
 
 #### 3. Format test scripts into fuzzing inputs
 ```bash
 python3.12 run.py {target_cmd} {fuzzer_type} {seed_id}
 ```
 
-| `fuzzer_type` | Output directory | Used by |
-|---|---|---|
-| `carpet` | `carpet_argvs/` | CarpetFuzz |
-| `zigzag` | `keyword_dict/` | ZigZagFuzz |
-| `afl_argv` | `afl_argvs/` | SelectFuzz |
+| `fuzzer_type` | Used by |
+|---|---|
+| `carpet` | CarpetFuzz |
+| `zigzag` | ZigZagFuzz |
+| `afl_argv` | SelectFuzz |
 
 
-After completing these steps, the formatted seeds for each fuzzer (mutator) will be generated in `/root/PILOT/seeds/pilot/`:
-- `input/{target_cmd}_{seed_id}/` - Input files for fuzzing
-- `carpet_argvs/{target_cmd}_{seed_id}.txt` - Argument configurations for CarpetFuzz
-- `keyword_dict/list_{target_cmd}_{seed_id}.txt` - Keyword dictionary for ZigZagFuzz
-- `afl_argvs/{target_cmd}_{seed_id}/` - Argument configurations for SelectFuzz
+**Output:**
+- `seeds/pilot/carpet_argvs/{target_cmd}_{seed_id}.txt` - Argument configurations for CarpetFuzz
+- `seeds/pilot/keyword_dict/list_{target_cmd}_{seed_id}.txt` - Keyword dictionary for ZigZagFuzz
+- `seeds/pilot/afl_argvs/{target_cmd}_{seed_id}/` - Argument configurations for SelectFuzz
 
-These seeds are now ready to be used with your chosen fuzzer in Phase 3.
+Together with the input files from the previous step
+(`seeds/pilot/input/{target_cmd}_{seed_id}/`), these seeds are ready to be used
+with your chosen fuzzer in Phase 3.
 
 
 ## Phase 3: Fuzzing

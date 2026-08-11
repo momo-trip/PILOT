@@ -119,7 +119,6 @@ ENV LD_LIBRARY_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib:${LD_LIBRARY_PATH} \
 # ---------------------------------------------------------------------------
 WORKDIR /root
 
-COPY PILOT             /root/PILOT
 COPY kiso-utils        /root/kiso-utils
 COPY kiso-parser-c     /root/kiso-parser-c
 COPY kiso-parser-macro /root/kiso-parser-macro
@@ -138,6 +137,7 @@ RUN cd /root/kiso-parser-c     && ./download_clang.sh && ./update.sh
 # # 6. Fetch and instrument the target programs
 # #    This is the longest stage, so it comes last.
 # # ---------------------------------------------------------------------------
+COPY PILOT             /root/PILOT
 RUN cd /root/PILOT/program && ./h_download.sh
 RUN cd /root/PILOT/scripts && ./h_set_build.sh
 
