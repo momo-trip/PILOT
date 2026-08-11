@@ -150,7 +150,18 @@ python3.12 run.py {target_cmd} prepare
 
 > [!NOTE]
 > The list of available `target_cmd` values of the benchmark set is defined in
-> [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json).
+> [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json). 
+> The directory path for each target_cmd is defined in [`database.json`](https://github.com/momo-trip/PILOT/blob/main/database.json). Verify that the corresponding program has been downloaded to the program directory.
+> If you want to try a program outside the benchmark set, add the {target_cmd} identifier and directory name to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
+```json
+"xmlwf_old": {
+    "main_path": "",
+    "dir_name": "program/expat-2.4.1",
+    "cmd_exe": "",
+    "notes": []
+}
+```
+For `dir_name`, specify the path relative to `/root/PILOT`.
 
 
 The extracted metadata is written to `metadata_{target_cmd}/`.
@@ -166,7 +177,7 @@ Should avoid using as the target because it has two main functions.
 =============== End of prepare ===============
 ```
 
-Identify the correct main function for your target command and add it to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
+If you want to try a program outside the benchmark set, identify the correct main function for your target command and the path to the target command's executable binary, and add them to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
 ```json
 "xmlwf_old": {
     "main_path": "program/expat-2.4.1/xmlwf/xmltchar.h",
@@ -176,7 +187,7 @@ Identify the correct main function for your target command and add it to [PILOT/
 }
 ```
 For `cmd_exe`, specify the path to the target command's executable binary,
-relative to `dir_name`. For `main_path` and `dir_name`, specify the path relative to
+relative to `dir_name`. For `main_path`, specify the path relative to
 `/root/PILOT`.
 
 
