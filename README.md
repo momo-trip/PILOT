@@ -180,12 +180,14 @@ For `dir_name`, specify the path relative to `/root/PILOT`.
 
 After executing the script, you will see output like the following:
 ```
-----------------------------------------------
+---------------- Result ----------------
 /root/PILOT/program/expat-2.4.1/tests/benchmark/benchmark.c
 /root/PILOT/program/expat-2.4.1/xmlwf/xmltchar.h
 /root/PILOT/program/expat-2.4.1/examples/outline.c
 /root/PILOT/program/expat-2.4.1/examples/elements.c
-Should avoid using as the target because it has two main functions.
+
+Should avoid using as the target because it has multiple main functions.
+
 =============== End of prepare ===============
 ```
 

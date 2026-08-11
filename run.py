@@ -648,11 +648,9 @@ def explorer_main(target_cmd, process_type, directory_id, home_dir, config):
             if len(main_list) > 1:
                 for item in main_paths:
                     print(f"{item['path']}:{item['start_line']}-{item['end_line']}")
-                #raise ValueError("Should avoid using as the target because it has two main functions.")
-                print("Should avoid using as the target because it has two main functions.")
+                print("Should avoid using as the target because it has multiple main functions.")
             
             elif len(main_list) == 0:
-                #raise ValueError("Should avoid using as the target because it has no main function.")
                 print("Should avoid using as the target because it has no main function.")
 
             else:
