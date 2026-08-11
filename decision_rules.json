@@ -1,0 +1,114 @@
+{
+    "feature_thresholds": {
+        "close": {
+            "diameter": {
+                "operator": ">=",
+                "value": 10.0,
+                "correlation": 0.5248048670421284,
+                "interpretation": "close is favorable when diameter is at least 10.000"
+            },
+            "avg_shortest_path": {
+                "operator": ">=",
+                "value": 4.3244233842816175,
+                "correlation": 0.4722012403573446,
+                "interpretation": "close is favorable when avg_shortest_path is at least 4.324"
+            },
+            "closeness_centrality_skew": {
+                "operator": ">=",
+                "value": 5.224372255133297,
+                "correlation": 0.4255863205147668,
+                "interpretation": "close is favorable when closeness_centrality_skew is at least 5.224"
+            },
+            "largest_scc_size": {
+                "operator": "<=",
+                "value": 3.0,
+                "correlation": -0.42043995053183997,
+                "interpretation": "close is favorable when largest_scc_size is at most 3.000"
+            },
+            "largest_scc_ratio": {
+                "operator": "<=",
+                "value": 0.00919756427204674,
+                "correlation": -0.3970422252233999,
+                "interpretation": "close is favorable when largest_scc_ratio is at most 0.009"
+            }
+        },
+        "page": {
+            "largest_scc_size": {
+                "operator": "<=",
+                "value": 3.0,
+                "correlation": -0.39187294111558185,
+                "interpretation": "page is favorable when largest_scc_size is at most 3.000"
+            },
+            "largest_scc_ratio": {
+                "operator": "<=",
+                "value": 0.00919756427204674,
+                "correlation": -0.3876569007147688,
+                "interpretation": "page is favorable when largest_scc_ratio is at most 0.009"
+            }
+        },
+        "bet": {
+            "pagerank_top10_concentration": {
+                "operator": ">=",
+                "value": 0.4047762803314465,
+                "correlation": 0.4619949443617234,
+                "interpretation": "bet is favorable when pagerank_top10_concentration is at least 0.405"
+            },
+            "pagerank_gini": {
+                "operator": ">=",
+                "value": 0.4063134437962211,
+                "correlation": 0.46138264351051944,
+                "interpretation": "bet is favorable when pagerank_gini is at least 0.406"
+            },
+            "pagerank_skew": {
+                "operator": ">=",
+                "value": 8.179620933876121,
+                "correlation": 0.3762346869287595,
+                "interpretation": "bet is favorable when pagerank_skew is at least 8.180"
+            },
+            "density": {
+                "operator": "<=",
+                "value": 0.00302486337363738,
+                "correlation": -0.3750317545692101,
+                "interpretation": "bet is favorable when density is at most 0.003"
+            },
+            "diameter": {
+                "operator": ">=",
+                "value": 10.0,
+                "correlation": 0.3532792537870505,
+                "interpretation": "bet is favorable when diameter is at least 10.000"
+            }
+        },
+        "deg": {
+            "closeness_centrality_skew": {
+                "operator": ">=",
+                "value": 5.224372255133297,
+                "correlation": 0.4566333608019036,
+                "interpretation": "deg is favorable when closeness_centrality_skew is at least 5.224"
+            },
+            "pagerank_top10_concentration": {
+                "operator": ">=",
+                "value": 0.4047762803314465,
+                "correlation": 0.39925128473358296,
+                "interpretation": "deg is favorable when pagerank_top10_concentration is at least 0.405"
+            },
+            "pagerank_gini": {
+                "operator": ">=",
+                "value": 0.4063134437962211,
+                "correlation": 0.3919815075005475,
+                "interpretation": "deg is favorable when pagerank_gini is at least 0.406"
+            },
+            "diameter": {
+                "operator": ">=",
+                "value": 10.0,
+                "correlation": 0.3887011653708611,
+                "interpretation": "deg is favorable when diameter is at least 10.000"
+            },
+            "pagerank_skew": {
+                "operator": ">=",
+                "value": 8.179620933876121,
+                "correlation": 0.3167266332151356,
+                "interpretation": "deg is favorable when pagerank_skew is at least 8.180"
+            }
+        }
+    }
+}
