@@ -78,7 +78,7 @@ Set the model parameters in the JSON file at [PILOT/config.json](https://github.
 - `llm_choice` - LLM service provider (e.g., `claude_azure`, `claude`)
 - `llm_model` - Specific model name (e.g., `databricks-claude-opus-4-8`, `claude-4-sonnet`). If `null`, the default model of the selected provider is used
 - `api_key` - Your API key for the LLM service
-- `azure_endpoint` - Serving endpoint URL (if using Azure or Databricks)
+- `azure_endpoint` - Serving endpoint URL (if using Azure Databricks)
 - `AGENT` - Whether to use the agent SDK based generation pipeline
 - `os_vendor` - Operating system name (e.g., `Ubuntu`)
 - `os_version` - Operating system version (e.g., `20.04`, `22.04`)
@@ -153,10 +153,7 @@ python3.12 run.py {target_cmd} prepare
 > [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json).
 
 
-#### 2. Extract function call relationships
-```bash
-python3.12 run.py {target_cmd} preset
-```
+The extracted metadata is written to `metadata_{target_cmd}/`.
 
 After executing the script, you will see output like the following:
 ```
@@ -183,6 +180,12 @@ relative to `dir_name`. For `main_path` and `dir_name`, specify the path relativ
 `/root/PILOT`.
 
 
+#### 2. Extract function call relationships
+```bash
+python3.12 run.py {target_cmd} preset
+```
+
+
 #### 3. Instrument with gcov for coverage measurement
 ```bash
 python3.12 run.py {target_cmd} gcno
@@ -193,21 +196,29 @@ python3.12 run.py {target_cmd} gcno
 python3.12 run.py {target_cmd} tool
 ```
 
+The extracted tool data is written to `tools/{target_cmd}/`.
+
+
 #### 5. Run iterative seed generation cycle
 ```bash
 python3.12 run.py {target_cmd} gen
 ```
 
-The strategy that PILOT chooses based on the pre-experiment is saved here: `decision.json`.
+- The strategy that PILOT chooses based on the pre-experiment is saved here: `decision.json`.
 
 #### 6. Extract generated shell scripts
-Run the following command to extract the generated shell scripts. The seed scripts for each command will be saved in `/root/PILOT/seeds`.
+Run the following command to extract the generated shell scripts. 
 ```bash
 python3.12 run.py {target_cmd} exp
 ```
 
+The seed scripts for each command will be saved in `/root/PILOT/seeds`.
+
 ## Phase 2: Reformatting
 #### 1. Setup
+`{seed_id}` is the index assigned to each exported seed script, numbered in the
+order the `python3.12 run.py {target_cmd} exp` command writes them.
+
 ```bash
 python3.12 run.py {target_cmd} set {seed_id}
 ```
