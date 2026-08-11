@@ -3,6 +3,7 @@
     "llm_model" : null,
     "api_key" : "",
     "azure_endpoint" : "",
+    "AGENT": true,
     "os_vendor" : "Ubuntu",
     "os_version" : "22.04",
     "strategy" : "base",

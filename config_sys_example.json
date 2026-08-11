@@ -15,6 +15,5 @@
     "timeout" : 300,
     "output_max": 128000,
     "context_window" : 1000000,
-    "AGENT": true,
     "COUNT_PERIODIC": true
 }
