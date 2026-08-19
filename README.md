@@ -5,7 +5,7 @@ PILOT is a novel CLI fuzzing framework that leverages Large Language Models (LLM
 ## Directory structure
 ```
 PILOT/
-├── Dockerfile               # Container image definition (build from parent dir)
+├── Dockerfile               # Container image definition
 ├── Dockerfile.dockerignore  # Build context exclusions for the Dockerfile
 ├── requirements.txt         # Python dependencies installed in the image
 ├── run.py               # main Python script
@@ -16,9 +16,9 @@ PILOT/
 │   ├── __init__.py
 │   ├── analyze.py       # Function metadata and call relationship extraction
 │   ├── generate.py      # LLM-driven seed generation loop
-│   ├── graph.py         # Call graph construction and centrality metrics
+│   ├── graph.py         # Call graph construction
 │   ├── reformat.py      # Conversion of test scripts into fuzzer inputs
-│   ├── tool.py          # Native tools exposed to the LLM
+│   ├── tool.py          # Native tools detection
 │   └── utils.py         # Shared helpers
 ├── program/               # Target applications
 │   └── h_download.sh      # Download script for target programs
@@ -50,8 +50,6 @@ build context must include the `kiso-*` repositories:
 ```bash
 docker build -f PILOT/Dockerfile -t pilot:latest .
 ```
-
-Requires Docker 23 or later (BuildKit).
 
 #### 2. Start a container
 
@@ -158,7 +156,7 @@ python3.12 run.py {target_cmd} prepare
 
 **Output:**
 - `metadata_{target_cmd}/` - Extracted function metadata
-- `workspace_{target_cmd}/` - The target rebuilt
+- `workspace_{target_cmd}/` - The target rebuilt directory
 - `database/{target_cmd}/` - Per-program misc data
 
 

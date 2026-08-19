@@ -574,8 +574,8 @@ def brash_up(input_path, output_path, target_cmd, analysis_type):
 
     remove_blank_lines(output_path)
 
-    if analysis_type != "input":
-        insert_line_count(output_path)
+    # if analysis_type != "input":
+    #     insert_line_count(output_path)
 
 
 
@@ -755,6 +755,8 @@ def generate_carpet_argv(
     remove_duplicate(brashed_path)
     remove_without_at(brashed_path)
 
+    insert_line_count(brashed_path)
+
     # output_dir = os.path.dirname(carpet_argv_path)
     # output_filename = os.path.basename(carpet_argv_path)
 
@@ -768,7 +770,6 @@ def generate_zigzag_argv(
 ):
     if not os.path.exists(base_argv_path):
         raise ValueError(f"Should prepare {base_argv_path}")
-    # insert_line_count(base_argv_path)
 
     count, options = count_options(base_argv_path)
 
@@ -872,7 +873,7 @@ def generate_afl_argv(
         input_path, brashed_path, 
         target_cmd, "afl"
     )
-    delete_first_line(brashed_path)
+    # delete_first_line(brashed_path)
     
     if os.path.exists(output_dir):
         delete_directory(output_dir)

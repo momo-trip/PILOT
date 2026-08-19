@@ -1,11 +1,9 @@
 pilot_lib/h_export.py
 pilot_lib/h_cov.py
 # pilot_lib/tool.py
-reformat_original.py 
-hd_strategy.json 
+reformat_original.py  
 instances.json 
 # benchmark.json
-decision_rules.json
 note.txt
 patch_kind.py
 #
