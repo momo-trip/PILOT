@@ -1,6 +1,6 @@
 ## Discovered Vulnerabilities
 
-The list of discovered　vulnerabilities is maintained in the following spreadsheet:
+The list of discovered vulnerabilities is maintained in the following spreadsheet:
 
 **[Vulnerability List (Google Sheets)](https://docs.google.com/spreadsheets/d/1-L4khXad8puzR_WCrYK9tE0yglwfijrreCYPAULkzGo/edit?usp=sharing)**
 
