@@ -97,7 +97,7 @@ for a template.
 - `page` - PageRank algorithm
 - `random_t` - Random selection (baseline)
 
-The strategy that PILOT chooses based on the pre-experiment is saved here: [`decision.json`](https://github.com/momo-trip/PILOT/blob/main/decision.json).
+The strategy that PILOT chooses based on the pre-experiment is saved here: [`decision_rules.json`](https://github.com/momo-trip/PILOT/blob/main/decision_rules.json).
 
 
 **LLM options (for `{llm_choice}` parameter):**
@@ -140,11 +140,11 @@ Defaults are provided. Override them as necessary.
 - `COUNT_PERIODIC` - Whether to measure coverage periodically
 
 
-### Important notes:
-- While the codebase includes code paths for other LLM providers, only Claude models are currently supported.
-- The harness was originally hand-written, but continuous maintenance is costly, so this part is now partly delegated to Claude Code. Please run with `"AGENT": true`; the hand-written path is retained for reference but is no longer actively maintained.
-- In recent runs, seed generation may occasionally be blocked by the LLM provider's safety filter. PILOT treats this as a skip and proceeds to the next target function.
-- Seed generation uses the environment specified above, while each fuzzer requires its own separate environment. Please follow the respective fuzzer's guidelines for setting up the fuzzing execution environment.
+> [!CAUTION]
+> - While the codebase includes code paths for other LLM providers, only Claude models are currently supported.
+> - **Please run with `"AGENT": true`.** The harness was originally hand-written, but continuous maintenance is costly, so this part is now partly delegated to Claude Code. The hand-written path is retained for reference but is no longer actively maintained.
+> - In recent runs, seed generation may occasionally be blocked by the LLM provider's safety filter. PILOT treats this as a skip and proceeds to the next target function.
+> - Seed generation uses the environment specified above, while each fuzzer requires its own separate environment. Please follow the respective fuzzer's guidelines for setting up the fuzzing execution environment.
 
 
 ## Phase 1: Seed generation
