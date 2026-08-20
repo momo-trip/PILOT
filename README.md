@@ -84,6 +84,7 @@ for a template.
 - `AGENT` - Whether to use the agent SDK based generation pipeline
 - `os_vendor` - Operating system name (e.g., `Ubuntu`)
 - `os_version` - Operating system version (e.g., `20.04`, `22.04`)
+- `max_target_func` - Maximum number of target functions to select
 - `strategy` - Seed generation strategy (e.g., `base`)
 - `cent` - Centrality metric used to select target functions (see below)
 
@@ -123,7 +124,6 @@ documentation for the available account types and credentials:
 Defaults are provided. Override them as necessary.
 - `user_id` - Identifier for the run
 - `database_path` - Path to the target definition file (default: `database.json`)
-- `max_target_func` - Maximum number of target functions to select
 - `total_time` - Overall time budget for the generation loop, in seconds
 - `interval` - Interval between periodic tasks such as coverage measurement, in seconds
 - `max_explore_time` - Upper bound on a single exploration phase, in seconds

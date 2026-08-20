@@ -4,8 +4,8 @@ make distclean
 # export CC=clang
 # export CXX=clang++
 export CFLAGS="-fprofile-arcs -ftest-coverage"
-export LDFLAGS="-lgcov --coverage -ldeflate" # -Wl,--no-as-needed 
+export LDFLAGS="--coverage" 
 
 ./autogen.sh
-./configure --disable-libdeflate #--disable-shared --enable-static
-bear -- make -j"$(nproc)"
+./configure #--disable-shared --enable-static
+bear -- make -j"$(nproc)" EXTRALIBS='$(XTRALIBS) -lm -ldl -rdynamic -lfontconfig -lfreetype -ldeflate'

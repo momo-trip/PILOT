@@ -6,6 +6,7 @@
     "AGENT": true,
     "os_vendor" : "Ubuntu",
     "os_version" : "22.04",
+    "max_target_func": 5,
     "strategy" : "base",
     "cent" : "close"
 }
