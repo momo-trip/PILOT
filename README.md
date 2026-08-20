@@ -161,10 +161,10 @@ python3.12 run.py {target_cmd} prepare
 
 
 > [!NOTE]
-> The list of available `target_cmd` values of the benchmark set is defined in
+> - The list of available `target_cmd` values of the benchmark set is defined in
 > [`benchmark.json`](https://github.com/momo-trip/PILOT/blob/main/benchmark.json). 
-> The directory path for each `target_cmd` is defined in [`database.json`](https://github.com/momo-trip/PILOT/blob/main/database.json). Verify that the corresponding program has been downloaded to the program directory.
-> If you want to try a program outside the benchmark set, add the `target_cmd` identifier and the directory name to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
+> - The directory path for each `target_cmd` is defined in [`database.json`](https://github.com/momo-trip/PILOT/blob/main/database.json). Verify that the corresponding program has been downloaded to the program directory.
+> - If you want to try a program outside the benchmark set, add the `target_cmd` identifier and the directory name to [PILOT/database.json](https://github.com/momo-trip/PILOT/blob/main/database.json). For example:
 ```json
 "xmlwf_old": {
     "main_path": "",

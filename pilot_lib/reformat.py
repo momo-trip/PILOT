@@ -281,6 +281,7 @@ def change_command_string_llm(
                     f"- Start from the first line of the txt file, and begin your answer with the first {slice_num} lines.", #Do not respond with something like 'The input file is too large to process in a single response. Please provide a smaller subset of the file or specify a range of lines to process.'; instead, refer to the file starting from line 1 and begin answering the commands.",
                     "- Since the answer will be copy-pasted directly into the txt file, never omit any of the original file's content.",
                     f"- Please write the number corresponding to the Line before the answer command. Example) For the command on Line 1, answer with Line 1. {target_cmd} <arguments>.",
+                    f"- The input txt file may contain a prefix such as [0] representing the indent level. Ignore it completely and never include it in your answer.",
                     "",
                     # "### Value of the \"input_option\" key:",
                     # "- In the input_option key of the JSON data, if moving @@ to the end of the command sequence is valid as a command sequence, place the word valid, then write only the single chunk of the option part that uses that input file path.",
@@ -311,6 +312,7 @@ def change_command_string_llm(
                     "- If the answer continues, set the ongoing flag to True.",
                     "- Since the answer will be copy-pasted directly into the txt file, never omit any of the original file's content.",
                     f"- Please write the number corresponding to the Line before the answer file path name. Example) For the command on Line 1, answer with Line 1. <input file path>.",
+                    "- The input txt file may contain a prefix such as [0] representing the indent level. Ignore it completely and never include it in your answer.",
                     "- Count the number of lines in the answer. Also count the number of lines before modification (the number of commands). Write each count inside the \"info\" key.",
                     "- If the counts before and after the answer do not match, set the info_match key to false."
                     ])

@@ -1,5 +1,5 @@
 {
-    "llm_choice" : "claude_azure",
+    "llm_choice" : "claude",
     "llm_model" : "claude-opus-4-8",
     "api_key" : "",
     "azure_endpoint" : "",
