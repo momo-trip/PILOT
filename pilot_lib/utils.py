@@ -3,11 +3,11 @@ import os
 import random
 import subprocess
 
-from dataclasses import dataclass
-from dataclasses import fields
-
 from datetime import datetime
 from typing import Any, Dict
+from dataclasses import dataclass, field, fields
+from typing import Optional, Any
+
 
 from utils_api import (
     read_json,
@@ -18,9 +18,6 @@ from utils_api import (
     get_timestamp,
     parse_def_loc,
 )
-
-from dataclasses import dataclass, field
-from typing import Optional, Any
 
 
 @dataclass
