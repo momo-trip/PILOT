@@ -119,7 +119,7 @@ documentation for the available account types and credentials:
 <https://code.claude.com/docs/en/authentication>
 
 
-**System parameters (`config_sys.json`):**
+**System parameters ([`config_sys.json`](https://github.com/momo-trip/PILOT/blob/main/config_sys.json)):**
 
 Defaults are provided. Override them as necessary.
 - `user_id` - Identifier for the run
